@@ -81,16 +81,6 @@
         android:text="MAC：读取中…" />
 
     <TextView
-        android:id="@+id/tvIp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingHorizontal="16dp"
-        android:paddingBottom="8dp"
-        android:textColor="#D32F2F"
-        android:textSize="12sp"
-        android:text="IP：未连接" />
-
-    <TextView
         android:id="@+id/tvPerm"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

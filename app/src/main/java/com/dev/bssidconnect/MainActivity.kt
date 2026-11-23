@@ -105,8 +105,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressScan: ProgressBar
     private lateinit var btnMode: TextView
     private lateinit var tvMac: TextView
-    private lateinit var tvIp: TextView
-
+    
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastScanAt = 0L
 
@@ -142,7 +141,9 @@ class MainActivity : AppCompatActivity() {
     // 周期性漫游（~16-60s 一次）会把连接迁走，守护每次都能拉回；若预算是终身制则
     // ~3 分钟即耗尽放弃，改为连续失败制后可长期维持锁定。
     private val stableResetMs = 10000L
-    private var matchSinceElapsed = 0L   // 最近一次 cur==target 的起始时间戳，0=未匹配
+    private var matchSinceElapsed = 0L
+    /** 最近一次确认的当前 BSSID（connectionInfo 在部分 ROM 上闪烁返回 null/02:00…，用于状态行显示兜底） */
+    private var lastGoodBssid: String? = null
     private var relockStartElapsed = 0L          // relocking 开始时间戳（SystemClock.elapsedRealtime）
     private val watchdogHandler = Handler(Looper.getMainLooper())
     private val watchdog = object : Runnable {
@@ -168,6 +169,7 @@ class MainActivity : AppCompatActivity() {
                     when {
                         cur == null -> { driftStrikes = 0; matchSinceElapsed = 0L }
                         cur.equals(target.bssid, ignoreCase = true) -> {
+                            lastGoodBssid = cur
                             if (matchSinceElapsed == 0L) matchSinceElapsed = SystemClock.elapsedRealtime()
                             if (relockCount > 0 &&
                                 SystemClock.elapsedRealtime() - matchSinceElapsed >= stableResetMs
@@ -176,7 +178,7 @@ class MainActivity : AppCompatActivity() {
                                 relockCount = 0
                             }
                             if (driftStrikes > 0) {
-                                tvStatus.text = "已锁定 ${target.bssid}（${target.band}，防漂移守护中）"
+                                tvStatus.text = "已锁定 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}"
                             }
                             driftStrikes = 0
                         }
@@ -229,7 +231,6 @@ class MainActivity : AppCompatActivity() {
         btnUnlock = findViewById(R.id.btnUnlock)
         tvMac = findViewById(R.id.tvMac)
         tvMac.setOnClickListener { showMacHelpDialog() }
-        tvIp = findViewById(R.id.tvIp)
 
         showMacInfo()
 
@@ -242,7 +243,7 @@ class MainActivity : AppCompatActivity() {
         val savedPlan = LockPlanStorage.load(this)
         if (savedPlan != null) {
             btnUnlock.visibility = View.VISIBLE
-            tvStatus.text = "恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）"
+            tvStatus.text = "恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）${ipSuffix()}"
             diag("PLAN-RESTORE bssid=${savedPlan.bssid} mode=${if (savedPlan.useSuggestion) "sug" else "spec"}")
             val ap = ApItem(
                 bssid = savedPlan.bssid, ssid = savedPlan.ssid, level = 0,
@@ -297,7 +298,6 @@ class MainActivity : AppCompatActivity() {
         }
         adapter.connectedBssid = currentBssid()
         showMacInfo()
-        updateIpDisplay()
     }
 
     override fun onPause() {
@@ -358,6 +358,12 @@ class MainActivity : AppCompatActivity() {
         }
         adapter.update(groupBySsid(results))
         tvStatus.text = "共 ${results.size} 个接入点"
+        // 已在守护目标上（锁定/已连接态）时，扫描刷新保留连接信息并追加 IP
+        val target = lockedTarget
+        val cur = currentBssid() ?: lastGoodBssid
+        if (target != null && cur != null && cur.equals(target.bssid, ignoreCase = true)) {
+            tvStatus.text = "已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}"
+        }
     }
 
     private fun currentBssid(): String? = try {
@@ -367,22 +373,24 @@ class MainActivity : AppCompatActivity() {
         null
     }
 
-    /** 终端上线后的 IP（Wi-Fi 网络的 IPv4），红色字体展示在硬件 MAC 下方 */
-    private fun updateIpDisplay() {
-        val ip = try {
-            val network = connectivityManager.activeNetwork
-            val ni = network?.let { connectivityManager.getNetworkCapabilities(it) }
-            if (network != null && ni != null && ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                connectivityManager.getLinkProperties(network)?.linkAddresses
-                    ?.firstOrNull { it.address is java.net.Inet4Address }
-                    ?.address?.hostAddress
-            } else null
-        } catch (_: Exception) {
-            null
+    /** 当前 Wi-Fi 网络的 IPv4（遍历所有网络，兼容 specifier 建立的 LocalOnly 网络不是默认网络的机型），无连接返回 null */
+    private fun currentIp(): String? = try {
+        var found: String? = null
+        for (network in connectivityManager.allNetworks) {
+            val ni = connectivityManager.getNetworkCapabilities(network) ?: continue
+            if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+            val ip = connectivityManager.getLinkProperties(network)?.linkAddresses
+                ?.firstOrNull { it.address is java.net.Inet4Address }
+                ?.address?.hostAddress
+            if (ip != null) { found = ip; break }
         }
-        tvIp.text = if (ip != null) "IP：$ip" else "IP：未连接"
-        diag("IP-UPDATE ip=$ip")
+        found
+    } catch (_: Exception) {
+        null
     }
+
+    /** 拼接到状态文案尾部的 IP 后缀（红色由状态行统一着色不需要，直接跟文本） */
+    private fun ipSuffix(): String = currentIp()?.let { "，IP：$it" } ?: ""
 
     /**
      * 读取芯片出厂硬件 MAC（factory MAC）。
@@ -626,8 +634,7 @@ class MainActivity : AppCompatActivity() {
                     adapter.connectedBssid = ap.bssid
                     adapter.connectingBssid = null
                     adapter.notifyDataSetChanged()
-                    tvStatus.text = "已连接 ${ap.bssid}（${ap.band}，防漂移守护中）"
-                    updateIpDisplay()
+                    tvStatus.text = "已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}"
                     startScan()   // 连接成功后触发一次列表刷新（信号强度/IP 状态同步）
                     Toast.makeText(
                         this@MainActivity,
@@ -652,7 +659,6 @@ class MainActivity : AppCompatActivity() {
                         tvStatus.text =
                             if (relockCount > 0) "重新锁定失败（被取消/超时），已停止守护"
                             else "连接失败：用户取消 / 密码错误 / 超时"
-                        updateIpDisplay()
                         Toast.makeText(this@MainActivity, tvStatus.text, Toast.LENGTH_LONG).show()
                     }
                 }
@@ -810,7 +816,7 @@ class MainActivity : AppCompatActivity() {
         diag("SUG-RESULT code=$code ($reason)")
         runOnUiThread {
             if (code == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
-                tvStatus.text = "建议已提交：${ap.bssid}（等待系统自动连入，守护中）"
+                tvStatus.text = "建议已提交：${ap.bssid}（等待系统自动连入，守护中）${ipSuffix()}"
                 Toast.makeText(this@MainActivity, "建议网络已提交，等待系统自动连入目标 AP", Toast.LENGTH_LONG).show()
                 startWatchdog()
                 startNudge()   // 功能1：选网器迟迟不评估时按阶梯唤醒
