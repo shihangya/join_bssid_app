@@ -54,6 +54,25 @@ class GuardService : Service() {
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, GuardService::class.java))
         }
+
+        /** diag.txt 大小上限（256KB）：超过即截断保留尾部一半，防止无限增长 */
+        const val DIAG_MAX_BYTES = 256L * 1024
+
+        /**
+         * v14c：带轮转的 diag 追加写。超过 DIAG_MAX_BYTES 时只保留后半段
+         * （守护每 2s 写一条 WD，长时间运行会无限增长；截断保留最近日志足够排障）
+         */
+        fun appendDiagRotated(f: java.io.File, line: String) {
+            try {
+                if (f.length() > DIAG_MAX_BYTES) {
+                    val all = f.readText()
+                    val keep = all.substring(all.length / 2, all.length)
+                    f.writeText("…[rotated，丢弃较早一半日志]…\n$keep")
+                }
+                f.appendText(line)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private lateinit var wm: WifiManager
@@ -91,9 +110,8 @@ class GuardService : Service() {
     private fun diag(msg: String) {
         android.util.Log.w("BSC", "SVC|$msg")
         try {
-            java.io.File(filesDir, "diag.txt").appendText(
-                "${SystemClock.elapsedRealtime()}|SVC|$msg\n"
-            )
+            appendDiagRotated(java.io.File(filesDir, "diag.txt"),
+                "${SystemClock.elapsedRealtime()}|SVC|$msg\n")
         } catch (_: Exception) {
         }
     }
@@ -185,9 +203,10 @@ class GuardService : Service() {
                         // 轮询捕获并重绑列表（按钮 连接→已连接），状态行同步刷新为"已连接"
                         if (!GuardState.connectedBssid.equals(t.bssid, true)) {
                             GuardState.connectedBssid = t.bssid
-                            GuardState.uiMsg = "已连接 ${t.bssid}（${t.band}，防漂移守护中）${ipSuffix()}"
-                            diag("SVC-CONNECTED cur==target relock=$relockCount")
+                            diag("SVC-CONNECTED cur==target relock=$relockCount rssi=${currentRssi()}")
                         }
+                        // v14c：RSSI/IP 实时刷新——每个心跳都重写 uiMsg（MainActivity uiSync 2s 轮询渲染）
+                        GuardState.uiMsg = "已连接 ${t.bssid}（${t.band}${rssiSuffix()}，防漂移守护中）${ipSuffix()}"
                         if (matchSinceElapsed == 0L) matchSinceElapsed = SystemClock.elapsedRealtime()
                         if (relockCount > 0 &&
                             SystemClock.elapsedRealtime() - matchSinceElapsed >= stableResetMs
@@ -211,7 +230,7 @@ class GuardService : Service() {
             }
             updateGuardNotification(
                 if (relocking) "正在重新锁定 ${t.bssid}…"
-                else if (cur != null && cur.equals(t.bssid, true)) "已锁定 ${t.bssid}（${t.band}）${ipSuffix()}"
+                else if (cur != null && cur.equals(t.bssid, true)) "已锁定 ${t.bssid}（${t.band}${rssiSuffix()}）${ipSuffix()}"
                 else "漂移检测中：当前 $cur，目标 ${t.bssid}"
             )
             handler.postDelayed(this, watchdogIntervalMs)
@@ -306,7 +325,7 @@ class GuardService : Service() {
                 relocking = false
                 stopNudge()
                 GuardState.connectedBssid = ap.bssid
-                GuardState.uiMsg = "已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}"
+                GuardState.uiMsg = "已连接 ${ap.bssid}（${ap.band}${rssiSuffix()}，防漂移守护中）${ipSuffix()}"
             }
 
             override fun onUnavailable() {
@@ -393,6 +412,13 @@ class GuardService : Service() {
         null
     }
 
+    /** v14c：当前连接 RSSI（dBm，拿不到返回 null）——供状态行/通知实时显示 */
+    private fun currentRssi(): Int? = try {
+        wm.connectionInfo?.rssi?.takeIf { it in -100..0 }
+    } catch (_: Exception) {
+        null
+    }
+
     private fun ipSuffix(): String = try {
         var found: String? = null
         for (network in cm.allNetworks) {
@@ -407,6 +433,9 @@ class GuardService : Service() {
     } catch (_: Exception) {
         ""
     }
+
+    /** v14c：RSSI 后缀（"，-28 dBm"，前导逗号拼在 band 后；拿不到返回空，避免双逗号） */
+    private fun rssiSuffix(): String = currentRssi()?.let { "，$it dBm" } ?: ""
 
     /** 功能2：目标 BSSID 是否还出现在扫描结果里（消失判定的第二条件） */
     private fun targetVisibleInScan(t: ApItem): Boolean = try {

@@ -108,9 +108,8 @@ class MainActivity : AppCompatActivity() {
     private fun diag(msg: String) {
         Log.w(TAG, msg)
         try {
-            java.io.File(filesDir, "diag.txt").appendText(
-                "${SystemClock.elapsedRealtime()}|$msg\n"
-            )
+            GuardService.appendDiagRotated(java.io.File(filesDir, "diag.txt"),
+                "${SystemClock.elapsedRealtime()}|$msg\n")
         } catch (_: Exception) {
         }
     }
@@ -127,6 +126,10 @@ class MainActivity : AppCompatActivity() {
     
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastScanAt = 0L
+    /** v14c：系统扫描限流窗口（Android 4 次/2min = 240s），用于限流提示计算剩余等待 */
+    private val SCAN_THROTTLE_MS = 240_000L
+    /** v14c：本地提示（限流等）在状态行的保持截止时间——期间服务心跳/扫描刷新不覆盖 */
+    private var localMsgHoldUntil = 0L
 
     // ==== 功能2：厂商默认模式 + 模式持久化 ====
     // SharedPreferences("bsc_prefs") 键 mode_suggestion；无存储值时按厂商推断默认值。
@@ -245,7 +248,11 @@ class MainActivity : AppCompatActivity() {
                 val updated = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, true)
                 renderResults()
                 progressScan.visibility = View.GONE
-                if (!updated) tvStatus.text = "扫描被系统限流，以下为缓存结果"
+                if (!updated) {
+                    // v14c：限流提示带剩余等待秒数（Android 限流窗口 4 次/2min，节流后需等窗口）
+                    val remain = ((SCAN_THROTTLE_MS - (SystemClock.elapsedRealtime() - lastScanAt)) / 1000L).coerceAtLeast(0)
+                    tvStatus.text = "扫描被系统限流（约 ${remain}s 后可再试），以下为缓存结果"
+                }
             }
         }
     }
@@ -358,6 +365,8 @@ class MainActivity : AppCompatActivity() {
 
     /** 把 GuardState 的最新文案渲染到状态行（保留红色渲染逻辑） */
     private fun syncUiFromGuardState() {
+        // v14c：本地提示保持期内不覆盖（限流提示等）
+        if (SystemClock.elapsedRealtime() < localMsgHoldUntil) return
         val t = GuardState.target
         val msg = GuardState.uiMsg
         if (t != null && msg.isNotEmpty()) {
@@ -372,7 +381,15 @@ class MainActivity : AppCompatActivity() {
         } else if (msg.isNotEmpty()) {
             tvStatus.text = msg
         }
+        // v14c：锁定目标但服务尚未产出文案时（提交中/恢复中），本地补渲染"已连接"态
+        // （服务侧每 2s 心跳会写 uiMsg，这里兜底避免短暂空白）
+        if (t != null && msg.isEmpty() && (cur0() ?: lastGoodBssid).equals(t.bssid, true)) {
+            setStatusRed("已连接 ${t.bssid}（${t.band}，防漂移守护中）${ipSuffix()}", t.bssid, ipSuffix().removePrefix("，"))
+        }
     }
+
+    /** 本地 currentBssid 别名（syncUiFromGuardState 内不遮蔽外部 cur 变量语义） */
+    private fun cur0(): String? = currentBssid()
 
     override fun onPause() {
         super.onPause()
@@ -452,13 +469,27 @@ class MainActivity : AppCompatActivity() {
             requestNeededPermissions()
             return
         }
+        // v14c：限流预检——系统限流 4 次/2min（240s 窗口）。距上次成功发起扫描不足 30s 时
+        // 直接提示等待并展示缓存，避免无效调用（点了也拿不到新结果）
+        val sinceLast = SystemClock.elapsedRealtime() - lastScanAt
+        if (lastScanAt > 0 && sinceLast < 30_000L) {
+            val waitSec = ((30_000L - sinceLast) / 1000L) + 1
+            tvStatus.text = "系统扫描限流中，约 ${waitSec}s 后可刷新（当前为缓存结果）"
+            // v14c：提示保持 4s，期间服务心跳/扫描回调不覆盖状态行
+            localMsgHoldUntil = SystemClock.elapsedRealtime() + 4000L
+            diag("SCAN-THROTTLED since=${sinceLast}ms")
+            return
+        }
         progressScan.visibility = View.VISIBLE
+        lastScanAt = SystemClock.elapsedRealtime()
         wifiManager.startScan()
         renderResults()
     }
 
     @SuppressLint("MissingPermission")
     private fun renderResults() {
+        // v14c：本地提示保持期内不覆盖（限流提示等）
+        if (SystemClock.elapsedRealtime() < localMsgHoldUntil) return
         val results = wifiManager.scanResults
         adapter.connectedBssid = currentBssid()
         if (results.isEmpty()) {
