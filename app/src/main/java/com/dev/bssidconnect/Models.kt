@@ -146,6 +146,29 @@ object LockEngine {
     }
 }
 
+/** SSID→密码 记忆库：连接时记住密码，同 SSID 再次弹窗自动填入（与锁定方案的 lock_pw 独立） */
+object PasswordStore {
+    private const val PREFS = "pw_store"
+
+    fun save(ctx: android.content.Context, ssid: String, password: String) {
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit()
+            .putString(ssid, password).apply()
+    }
+
+    fun load(ctx: android.content.Context, ssid: String): String? =
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(ssid, null)
+
+    fun forget(ctx: android.content.Context, ssid: String) {
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit()
+            .remove(ssid).apply()
+    }
+
+    fun clearAll(ctx: android.content.Context) {
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit().clear().apply()
+    }
+}
+
 /** LockPlan 的 SharedPreferences 持久化（密码单独存，JSON 用 org.json 手拼避免引依赖） */
 object LockPlanStorage {
     private const val PREFS = "bsc_prefs"

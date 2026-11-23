@@ -505,8 +505,11 @@ class MainActivity : AppCompatActivity() {
     private fun showPasswordDialog(ap: ApItem) {
         val view = layoutInflater.inflate(R.layout.dialog_password, null)
         val et = view.findViewById<TextInputEditText>(R.id.etPassword)
+        val cbRemember = view.findViewById<android.widget.CheckBox>(R.id.cbRemember)
         val info = view.findViewById<TextView>(R.id.tvInfo)
         info.text = "SSID: ${ap.ssid}\nBSSID: ${ap.bssid}（${ap.band}，${ap.secure}）"
+        // 密码记忆库：同 SSID 有存过密码则自动填入
+        PasswordStore.load(this, ap.ssid)?.let { et.setText(it) }
         AlertDialog.Builder(this)
             .setTitle("输入 Wi-Fi 密码")
             .setView(view)
@@ -515,6 +518,8 @@ class MainActivity : AppCompatActivity() {
                 if (pw.length < 8) {
                     Toast.makeText(this, "密码至少 8 位", Toast.LENGTH_SHORT).show()
                 } else {
+                    if (cbRemember.isChecked) PasswordStore.save(this, ap.ssid, pw)
+                    else PasswordStore.forget(this, ap.ssid)
                     connectToBssid(ap, pw)
                 }
             }
