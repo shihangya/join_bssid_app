@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressScan: ProgressBar
     private lateinit var btnMode: TextView
     private lateinit var tvMac: TextView
+    private lateinit var tvIp: TextView
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastScanAt = 0L
@@ -228,6 +229,7 @@ class MainActivity : AppCompatActivity() {
         btnUnlock = findViewById(R.id.btnUnlock)
         tvMac = findViewById(R.id.tvMac)
         tvMac.setOnClickListener { showMacHelpDialog() }
+        tvIp = findViewById(R.id.tvIp)
 
         showMacInfo()
 
@@ -295,6 +297,7 @@ class MainActivity : AppCompatActivity() {
         }
         adapter.connectedBssid = currentBssid()
         showMacInfo()
+        updateIpDisplay()
     }
 
     override fun onPause() {
@@ -362,6 +365,23 @@ class MainActivity : AppCompatActivity() {
         if (b != null && b != "02:00:00:00:00:00") b else null
     } catch (_: Exception) {
         null
+    }
+
+    /** 终端上线后的 IP（Wi-Fi 网络的 IPv4），红色字体展示在硬件 MAC 下方 */
+    private fun updateIpDisplay() {
+        val ip = try {
+            val network = connectivityManager.activeNetwork
+            val ni = network?.let { connectivityManager.getNetworkCapabilities(it) }
+            if (network != null && ni != null && ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                connectivityManager.getLinkProperties(network)?.linkAddresses
+                    ?.firstOrNull { it.address is java.net.Inet4Address }
+                    ?.address?.hostAddress
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+        tvIp.text = if (ip != null) "IP：$ip" else "IP：未连接"
+        diag("IP-UPDATE ip=$ip")
     }
 
     /**
@@ -607,6 +627,8 @@ class MainActivity : AppCompatActivity() {
                     adapter.connectingBssid = null
                     adapter.notifyDataSetChanged()
                     tvStatus.text = "已连接 ${ap.bssid}（${ap.band}，防漂移守护中）"
+                    updateIpDisplay()
+                    startScan()   // 连接成功后触发一次列表刷新（信号强度/IP 状态同步）
                     Toast.makeText(
                         this@MainActivity,
                         if (relockCount == 0) "连接成功" else "已重新锁定到 ${ap.bssid}",
@@ -630,6 +652,7 @@ class MainActivity : AppCompatActivity() {
                         tvStatus.text =
                             if (relockCount > 0) "重新锁定失败（被取消/超时），已停止守护"
                             else "连接失败：用户取消 / 密码错误 / 超时"
+                        updateIpDisplay()
                         Toast.makeText(this@MainActivity, tvStatus.text, Toast.LENGTH_LONG).show()
                     }
                 }
