@@ -178,7 +178,7 @@ class MainActivity : AppCompatActivity() {
                                 relockCount = 0
                             }
                             if (driftStrikes > 0) {
-                                tvStatus.text = "已锁定 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}"
+                                setStatusRed("已锁定 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
                             }
                             driftStrikes = 0
                         }
@@ -243,7 +243,7 @@ class MainActivity : AppCompatActivity() {
         val savedPlan = LockPlanStorage.load(this)
         if (savedPlan != null) {
             btnUnlock.visibility = View.VISIBLE
-            tvStatus.text = "恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）${ipSuffix()}"
+            setStatusRed("恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）${ipSuffix()}", savedPlan.bssid, ipSuffix().removePrefix("，"))
             diag("PLAN-RESTORE bssid=${savedPlan.bssid} mode=${if (savedPlan.useSuggestion) "sug" else "spec"}")
             val ap = ApItem(
                 bssid = savedPlan.bssid, ssid = savedPlan.ssid, level = 0,
@@ -362,7 +362,7 @@ class MainActivity : AppCompatActivity() {
         val target = lockedTarget
         val cur = currentBssid() ?: lastGoodBssid
         if (target != null && cur != null && cur.equals(target.bssid, ignoreCase = true)) {
-            tvStatus.text = "已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}"
+            setStatusRed("已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
         }
     }
 
@@ -391,6 +391,25 @@ class MainActivity : AppCompatActivity() {
 
     /** 拼接到状态文案尾部的 IP 后缀（红色由状态行统一着色不需要，直接跟文本） */
     private fun ipSuffix(): String = currentIp()?.let { "，IP：$it" } ?: ""
+
+    /** 状态行部分文字标红（BSSID/IP），其余保持默认色 */
+    private fun setStatusRed(base: String, vararg redParts: String) {
+        val ssb = android.text.SpannableStringBuilder(base)
+        val paint = tvStatus.paint
+        for (part in redParts) {
+            if (part.isNullOrEmpty()) continue
+            var idx = ssb.indexOf(part)
+            while (idx >= 0) {
+                ssb.setSpan(
+                    android.text.style.ForegroundColorSpan(0xFFD32F2F.toInt()),
+                    idx, idx + part.length,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                idx = ssb.indexOf(part, idx + part.length)
+            }
+        }
+        tvStatus.text = ssb
+    }
 
     /**
      * 读取芯片出厂硬件 MAC（factory MAC）。
@@ -634,7 +653,7 @@ class MainActivity : AppCompatActivity() {
                     adapter.connectedBssid = ap.bssid
                     adapter.connectingBssid = null
                     adapter.notifyDataSetChanged()
-                    tvStatus.text = "已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}"
+                    setStatusRed("已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
                     startScan()   // 连接成功后触发一次列表刷新（信号强度/IP 状态同步）
                     Toast.makeText(
                         this@MainActivity,
@@ -816,7 +835,7 @@ class MainActivity : AppCompatActivity() {
         diag("SUG-RESULT code=$code ($reason)")
         runOnUiThread {
             if (code == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
-                tvStatus.text = "建议已提交：${ap.bssid}（等待系统自动连入，守护中）${ipSuffix()}"
+                setStatusRed("建议已提交：${ap.bssid}（等待系统自动连入，守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
                 Toast.makeText(this@MainActivity, "建议网络已提交，等待系统自动连入目标 AP", Toast.LENGTH_LONG).show()
                 startWatchdog()
                 startNudge()   // 功能1：选网器迟迟不评估时按阶梯唤醒
