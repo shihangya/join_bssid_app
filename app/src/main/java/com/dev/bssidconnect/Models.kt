@@ -170,6 +170,20 @@ object PasswordStore {
     }
 }
 
+/**
+ * v14：Activity 与 GuardService 共享的守护状态单例。
+ * Activity 前台时把 UI 消息从这里取走渲染；Activity 被杀/重建不影响服务侧守护。
+ */
+object GuardState {
+    @Volatile var target: ApItem? = null
+    @Volatile var password: String? = null
+    @Volatile var useSuggestion: Boolean = false
+    /** 服务写给 Activity 的最新状态文案（Activity onResume/轮询时渲染到 tvStatus） */
+    @Volatile var uiMsg: String = ""
+    /** 服务侧确认的当前连接 BSSID（列表按钮状态同步用） */
+    @Volatile var connectedBssid: String? = null
+}
+
 /** LockPlan 的 SharedPreferences 持久化（密码单独存，JSON 用 org.json 手拼避免引依赖） */
 object LockPlanStorage {
     private const val PREFS = "bsc_prefs"

@@ -68,13 +68,32 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(appCtx, "BssidConnect：恢复锁定 ${plan.bssid}", Toast.LENGTH_SHORT).show()
                 } catch (_: Throwable) {
                 }
-                // 同步执行（不再 postDelayed：BOOT_COMPLETED 到达时 Wi-Fi 服务已就绪；
-                // Suggestion 提交后由系统持久持有，无需本进程存活）
-                if (plan.useSuggestion) {
-                    LockEngine.submitSuggestion(wm, plan, pw, appCtx)
-                } else {
-                    LockEngine.requestLockedNetwork(cm, plan, pw, appCtx)
-                }
+                // v14：恢复动作交给前台服务承载（守护+告警持续运行），无 UI
+                GuardState.useSuggestion = plan.useSuggestion
+                GuardState.target = ApItem(
+                    bssid = plan.bssid, ssid = plan.ssid, level = 0,
+                    frequency = 0, channel = 0, band = plan.band, secure = plan.secure,
+                    isWifi6Plus = false
+                )
+                GuardState.password = pw
+                val svcIntent = Intent(appCtx, GuardService::class.java)
+                if (android.os.Build.VERSION.SDK_INT >= 26) appCtx.startForegroundService(svcIntent)
+                else appCtx.startService(svcIntent)
+                // 服务 onStartCommand 后由 beginGuardSession 发起连接（等 bind 或直接再发一次）
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    try {
+                        val wm2 = appCtx.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                        val cm2 = appCtx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                        // 服务可能尚未 bind——直接用 LockEngine 一次性提交兜底，服务接管后自动覆盖
+                        if (plan.useSuggestion) {
+                            LockEngine.submitSuggestion(wm2, plan, pw, appCtx)
+                        } else {
+                            LockEngine.requestLockedNetwork(cm2, plan, pw, appCtx)
+                        }
+                    } catch (t: Throwable) {
+                        LockEngine.logBoot(context, "BOOT-FALLBACK-ERR ${t.message}")
+                    }
+                }, 1500L)
                 LockEngine.logBoot(context, "BOOT-RESTORE-DONE bssid=${plan.bssid} mode=${if (plan.useSuggestion) "sug" else "spec"}")
             } catch (t: Throwable) {
                 LockEngine.logBoot(context, "BOOT-ERROR ${t.message}")
@@ -205,6 +224,21 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    // v14：通知权限（Android 13+ 需运行时请求；消失告警与常驻守护通知依赖它）
+    private val notifLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            diag("NOTIF-PERM granted=$granted")
+        }
+
+    private fun requestNotifPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     private val scanReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
@@ -239,7 +273,8 @@ class MainActivity : AppCompatActivity() {
         btnMode.text = if (useSuggestion) "模式:Suggestion" else "模式:Specifier"
         diag("MODE-INIT -> ${if (useSuggestion) "Suggestion" else "Specifier"} (pref or OEM default)")
 
-        // 功能3：恢复上次锁定方案（杀进程/重启后自动重锁）
+        // 功能3：恢复上次锁定方案（杀进程/重启后自动重锁）。
+        // v14：恢复动作直接交给 GuardService 前台服务承载（守护不随 Activity 生命周期中断）
         val savedPlan = LockPlanStorage.load(this)
         if (savedPlan != null) {
             btnUnlock.visibility = View.VISIBLE
@@ -250,17 +285,32 @@ class MainActivity : AppCompatActivity() {
                 frequency = 0, channel = 0, band = savedPlan.band, secure = savedPlan.secure,
                 isWifi6Plus = false
             )
-            // 等 UI 稳定 + 系统服务就绪后再发起
-            watchdogHandler.postDelayed({ connectToBssid(ap, LockPlanStorage.loadPassword(this)) }, 800L)
+            // 等 UI 稳定 + 服务就绪后由服务发起会话
+            GuardState.useSuggestion = useSuggestion
+            GuardService.start(this)
+            bindGuardService()
+            watchdogHandler.postDelayed({
+                val pw = LockPlanStorage.loadPassword(this)
+                guardBinder?.service()?.beginGuardSession(ap, pw)
+                    ?: run {
+                        diag("SVC-RESTORE-BIND-FAIL fallback local")
+                        localFallbackConnect(ap, pw)
+                    }
+            }, 800L)
         }
 
         btnUnlock.setOnClickListener {
+            // v14：解锁要同时停服务侧守护与本 Activity 遗留会话
             stopWatchdog()
             stopNudge()
             lockedTarget = null
             releaseCallback()
             removeAllSuggestions()
             clearLockPlan()
+            GuardState.target = null
+            GuardState.uiMsg = ""
+            GuardState.connectedBssid = null
+            GuardService.stop(this)
             tvStatus.text = "已解除锁定，恢复系统自动管理"
             Toast.makeText(this, "已解锁：清除锁定方案并停止守护", Toast.LENGTH_SHORT).show()
         }
@@ -296,8 +346,32 @@ class MainActivity : AppCompatActivity() {
         } else {
             requestNeededPermissions()
         }
+        requestNotifPermissionIfNeeded()
         adapter.connectedBssid = currentBssid()
         showMacInfo()
+        // v14：UI 恢复时从服务同步状态文案（Activity 重建/回前台场景）
+        syncUiFromGuardState()
+        // 服务可能在 Activity 不在时被 GuardService.beginGuardSession 启动；
+        // 若有锁定目标但服务未运行（极端情况），重新拉起
+        if (GuardState.target != null) GuardService.start(this)
+    }
+
+    /** 把 GuardState 的最新文案渲染到状态行（保留红色渲染逻辑） */
+    private fun syncUiFromGuardState() {
+        val t = GuardState.target
+        val msg = GuardState.uiMsg
+        if (t != null && msg.isNotEmpty()) {
+            // 状态文案里的 BSSID 与 IP 部分标红（与本地渲染规则一致）
+            val cur = currentBssid() ?: lastGoodBssid
+            tvStatus.text = msg
+            if (cur != null && cur.equals(t.bssid, true)) {
+                setStatusRed(msg, t.bssid, currentIp()?.let { "IP：$it" } ?: "")
+            } else {
+                setStatusRed(msg, t.bssid)
+            }
+        } else if (msg.isNotEmpty()) {
+            tvStatus.text = msg
+        }
     }
 
     override fun onPause() {
@@ -308,13 +382,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // v14：前台时轮询服务状态消息（2s，与守护节奏一致），UI 实时反映服务侧守护动态
+    private val uiSyncHandler = Handler(Looper.getMainLooper())
+    private var lastRenderedMsg = ""
+    private val uiSync = object : Runnable {
+        override fun run() {
+            syncUiFromGuardState()
+            GuardState.connectedBssid?.let {
+                adapter.connectedBssid = it
+            }
+            uiSyncHandler.postDelayed(this, 2000L)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        bindGuardService()
+        uiSyncHandler.postDelayed(uiSync, 2000L)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        uiSyncHandler.removeCallbacks(uiSync)
+        // 不解绑：服务连接保留（bindService 的连接随 Activity 销毁自动解除）
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopWatchdog()
         stopNudge()
+        // v14：守护移交前台服务——Activity 销毁（用户退出/系统回收）不清锁定状态，
+        // 服务继续 7×24 守护；仅当无锁定目标时才顺带清建议释放资源
         lockedTarget = null
         releaseCallback()
-        removeAllSuggestions()
+        if (GuardState.target == null) removeAllSuggestions()
+        serviceConn?.let { try { unbindService(it) } catch (_: Exception) {} }
+        serviceConn = null
+        guardBinder = null
     }
 
     private fun hasPermissions(): Boolean {
@@ -359,10 +463,12 @@ class MainActivity : AppCompatActivity() {
         adapter.update(groupBySsid(results))
         tvStatus.text = "共 ${results.size} 个接入点"
         // 已在守护目标上（锁定/已连接态）时，扫描刷新保留连接信息并追加 IP
-        val target = lockedTarget
+        // v14：目标可能在服务侧（lockedTarget=null 但 GuardState.target 非空）
+        val target = lockedTarget ?: GuardState.target
         val cur = currentBssid() ?: lastGoodBssid
         if (target != null && cur != null && cur.equals(target.bssid, ignoreCase = true)) {
             setStatusRed("已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
+            GuardState.uiMsg = "已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}"
         }
     }
 
@@ -574,21 +680,67 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 核心：按当前模式锁定 BSSID 发起连接，并启动防漂移守护 */
+    /** 核心：按当前模式锁定 BSSID 发起连接，守护由前台服务 GuardService 承载（v14） */
     private fun connectToBssid(ap: ApItem, password: String?) {
+        GuardState.useSuggestion = useSuggestion
+        GuardService.start(this)
+        // 会话发起交给服务（服务就绪后由 startId 之后的调用执行；直接调 binder 方法）
+        guardBinder?.service()?.beginGuardSession(ap, password)
+            // binder 未就绪（服务刚启动）时兜底：post 一帧再试
+            ?: watchdogHandler.postDelayed({
+                guardBinder?.service()?.beginGuardSession(ap, password)
+                    ?: run {
+                        diag("SVC-BIND-FAIL fallback local session")
+                        localFallbackConnect(ap, password)
+                    }
+            }, 400L)
+        persistLockPlanForService(ap, password)
+    }
+
+    private var guardBinder: GuardService.LocalBinder? = null
+
+    private var serviceConn: android.content.ServiceConnection? = null
+
+    private fun bindGuardService() {
+        if (serviceConn != null) return
+        val conn = object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+                guardBinder = binder as? GuardService.LocalBinder
+                diag("SVC-BOUND")
+            }
+
+            override fun onServiceDisconnected(name: android.content.ComponentName) {
+                guardBinder = null
+                diag("SVC-UNBOUND")
+            }
+        }
+        serviceConn = conn
+        bindService(Intent(this, GuardService::class.java), conn, Context.BIND_AUTO_CREATE)
+    }
+
+    /** 功能3：锁定方案落盘（服务侧也会存一份，这里保证 UI 按钮状态及时） */
+    private fun persistLockPlanForService(ap: ApItem, password: String?) {
+        LockPlanStorage.save(
+            this,
+            LockPlan(
+                ssid = ap.ssid, bssid = ap.bssid, band = ap.band, secure = ap.secure,
+                useSuggestion = useSuggestion
+            ),
+            password
+        )
+        btnUnlock.visibility = View.VISIBLE
+        diag("PLAN-SAVED bssid=${ap.bssid} mode=${if (useSuggestion) "sug" else "spec"}")
+    }
+
+    /** 服务绑定失败的兜底：老路径本 Activity 会话（保留 v6 全部逻辑） */
+    private fun localFallbackConnect(ap: ApItem, password: String?) {
         lockedTarget = ap
         lockedPassword = password
         relockCount = 0
-        // 切换目标/模式时清除上一会话（可能是 Specifier）遗留的挂起状态：
-        // 否则旧会话的 relocking=true 会污染新会话（30s 假超时 → 假 DRIFT）
         relocking = false
-        // 功能3：锁定方案落盘（重启/杀进程后可自动恢复）
-        persistLockPlan()
         if (useSuggestion) {
-            // Suggestion 模式：清旧建议→提交新建议（含 BSSID），系统自动连入
             releaseCallback()
             removeAllSuggestions()
-            // 给系统一点时间消化移除，避免同 SSID 新旧建议冲突
             watchdogHandler.postDelayed({ submitSuggestion(ap, password) }, 800L)
             tvStatus.text = "正在提交建议网络 ${ap.bssid}…"
             return
