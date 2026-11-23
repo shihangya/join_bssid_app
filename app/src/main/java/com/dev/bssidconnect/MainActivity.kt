@@ -385,11 +385,17 @@ class MainActivity : AppCompatActivity() {
     // v14：前台时轮询服务状态消息（2s，与守护节奏一致），UI 实时反映服务侧守护动态
     private val uiSyncHandler = Handler(Looper.getMainLooper())
     private var lastRenderedMsg = ""
+    private var lastSyncedConnected: String? = null
     private val uiSync = object : Runnable {
         override fun run() {
             syncUiFromGuardState()
-            GuardState.connectedBssid?.let {
-                adapter.connectedBssid = it
+            // 连接状态（按钮 连接→已连接）：connectedBssid 有变化才整表重绑，避免频繁刷列表
+            val cb = GuardState.connectedBssid ?: currentBssid()
+            if (cb != lastSyncedConnected) {
+                lastSyncedConnected = cb
+                adapter.connectedBssid = cb
+                adapter.connectingBssid = null
+                adapter.notifyDataSetChanged()
             }
             uiSyncHandler.postDelayed(this, 2000L)
         }

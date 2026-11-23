@@ -171,9 +171,23 @@ class GuardService : Service() {
                 }
             } else {
                 when {
-                    cur == null -> { driftStrikes = 0; matchSinceElapsed = 0L }
+                    cur == null -> {
+                        driftStrikes = 0; matchSinceElapsed = 0L
+                        // 连接丢失：清连接态，UI 按钮"已连接"→"连接"
+                        if (GuardState.connectedBssid != null) {
+                            GuardState.connectedBssid = null
+                            GuardState.uiMsg = "连接已断开，守护等待重连 ${t.bssid}…"
+                        }
+                    }
                     cur.equals(t.bssid, true) -> {
                         lastGoodBssid = cur
+                        // 连接成功后刷新 UI：connectedBssid 变化会被 MainActivity.uiSync
+                        // 轮询捕获并重绑列表（按钮 连接→已连接），状态行同步刷新为"已连接"
+                        if (!GuardState.connectedBssid.equals(t.bssid, true)) {
+                            GuardState.connectedBssid = t.bssid
+                            GuardState.uiMsg = "已连接 ${t.bssid}（${t.band}，防漂移守护中）${ipSuffix()}"
+                            diag("SVC-CONNECTED cur==target relock=$relockCount")
+                        }
                         if (matchSinceElapsed == 0L) matchSinceElapsed = SystemClock.elapsedRealtime()
                         if (relockCount > 0 &&
                             SystemClock.elapsedRealtime() - matchSinceElapsed >= stableResetMs
@@ -186,6 +200,11 @@ class GuardService : Service() {
                     else -> {
                         matchSinceElapsed = 0L
                         driftStrikes++
+                        // 漂移：清连接态（按钮还原"连接"），进入重锁流程
+                        if (!GuardState.connectedBssid.equals(cur, true) && GuardState.connectedBssid != null) {
+                            GuardState.connectedBssid = null
+                            GuardState.uiMsg = "漂移检测：当前 $cur，正在重新锁定 ${t.bssid}…"
+                        }
                         if (driftStrikes >= 2) onDriftDetected(cur)
                     }
                 }
@@ -210,6 +229,7 @@ class GuardService : Service() {
             // 放弃：清状态、停服务（通知移除由系统完成）
             diag("GIVE-UP relock=$relockCount")
             GuardState.target = null
+            GuardState.connectedBssid = null   // UI 按钮"已连接"还原为"连接"
             if (GuardState.useSuggestion) removeAllSuggestions()
             LockPlanStorage.clear(this)
             GuardState.uiMsg = "放弃锁定：系统反复把连接迁至 $actualBssid（已重锁 $maxRelock 次）"
@@ -233,6 +253,7 @@ class GuardService : Service() {
     fun beginGuardSession(ap: ApItem, password: String?) {
         GuardState.target = ap
         GuardState.password = password
+        GuardState.connectedBssid = null   // 新会话发起：旧连接态清除（按钮"已连接"→"连接"）
         relockCount = 0
         relocking = false
         driftStrikes = 0
