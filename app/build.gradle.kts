@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.dev.bssidconnect"
-        minSdk = 33
+        minSdk = 29
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"

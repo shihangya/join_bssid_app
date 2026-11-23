@@ -764,7 +764,8 @@ class MainActivity : AppCompatActivity() {
         val b = WifiNetworkSuggestion.Builder()
             .setSsid(ap.ssid)
             .setBssid(MacAddress.fromString(ap.bssid))
-            .setIsInitialAutojoinEnabled(true)
+        // setIsInitialAutojoinEnabled 是 API 31+；API 29/30（如 EMUI10）没有该方法，默认即启用
+        if (Build.VERSION.SDK_INT >= 31) b.setIsInitialAutojoinEnabled(true)
         if (password != null) {
             if (ap.secure == "WPA3") b.setWpa3Passphrase(password)
             else b.setWpa2Passphrase(password)

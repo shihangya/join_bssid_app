@@ -108,7 +108,8 @@ object LockEngine {
         val b = WifiNetworkSuggestion.Builder()
             .setSsid(plan.ssid)
             .setBssid(android.net.MacAddress.fromString(plan.bssid))
-            .setIsInitialAutojoinEnabled(true)
+        // setIsInitialAutojoinEnabled 是 API 31+；低版本默认启用
+        if (android.os.Build.VERSION.SDK_INT >= 31) b.setIsInitialAutojoinEnabled(true)
         if (password != null) {
             if (plan.secure == "WPA3") b.setWpa3Passphrase(password)
             else b.setWpa2Passphrase(password)
