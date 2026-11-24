@@ -21,8 +21,10 @@
             android:layout_weight="1"
             android:text="附近网络"
             android:textColor="#1A1A1A"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
 
         <ProgressBar
             android:id="@+id/progressScan"
@@ -34,7 +36,7 @@
             android:id="@+id/btnDash"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:padding="5dp"
             android:layout_marginEnd="4dp"
             android:text="仪表盘"
             android:textColor="@color/primary"
@@ -44,7 +46,7 @@
             android:id="@+id/btnMode"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:padding="5dp"
             android:layout_marginEnd="4dp"
             android:text="模式:Specifier"
             android:textColor="@color/text_secondary"
@@ -54,7 +56,7 @@
             android:id="@+id/btnUnlock"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:padding="5dp"
             android:layout_marginEnd="4dp"
             android:text="解锁"
             android:textColor="#D32F2F"
@@ -65,7 +67,7 @@
             android:id="@+id/btnScan"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:padding="5dp"
             android:text="刷新"
             android:textColor="@color/primary"
             android:textSize="15sp" />
