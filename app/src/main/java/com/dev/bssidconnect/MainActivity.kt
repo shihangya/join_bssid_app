@@ -785,23 +785,24 @@ class MainActivity : AppCompatActivity() {
             .setTitle("网关探活详情")
             .setOnDismissListener { trendView = null }
             .setView(box)
-            .setPositiveButton("立即探测", null)
-            .setNeutralButton("保存目标", null)
-            .setNegativeButton("关闭", null)
+            .setPositiveButton("关闭", null)   // 右侧=关闭，默认 dismiss，符合直觉（v16c 修"点两下才能关"）
+            .setNeutralButton("立即探测", null)
+            .setNegativeButton("保存目标", null)
             .show()
         // v16b：弹窗固定大小（宽 92%，高 = 标题+输入行+320px 趋势图+8 行日志+按钮行，一次探测记录刚好放下）
         pingDialog?.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.92f).toInt(),
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+        // 按钮序：[保存目标][立即探测][关闭]——立即探测=NEUTRAL（接管不关窗），保存目标=NEGATIVE
+        pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
             val t = etTarget.text?.toString()?.trim().orEmpty()
             ProbeConfig.setTarget(this, t)   // 顺手记住目标
             runManualPing(if (t.isEmpty()) null else t)
-            // positive 默认会 dismiss；探测中保持弹窗可见，实时刷新结果
+            // 探测中保持弹窗可见，实时刷新结果
             pingDialog?.let { d -> if (!d.isShowing) d.show() }
         }
-        pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+        pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener {
             ProbeConfig.setTarget(this, etTarget.text?.toString()?.trim().orEmpty())
             Toast.makeText(this, "探活目标已保存：${ProbeConfig.target(this).ifEmpty { "网关(自动)" }}", Toast.LENGTH_SHORT).show()
             diag("PROBE-TARGET set=${ProbeConfig.target(this)}")
