@@ -628,9 +628,10 @@ class GuardService : Service() {
         null
     }
 
-    /** 探活后台线程体：ping 网关（ICMP isReachable，绑定网络）→ 回主线程判定 */
+    /** 探活后台线程体：ping 配置目标（默认网关回退链）（绑定网络）→ 回主线程判定 */
     private fun probeLoop(targetBssid: String) {
-        val gw = currentGateway()
+        val cfg = ProbeConfig.target(this)
+        val gw = if (cfg.isNotEmpty()) try { java.net.InetAddress.getByName(cfg) } catch (_: Exception) { currentGateway() } else currentGateway()
         val net = currentWifiNetwork()
         val t0 = SystemClock.elapsedRealtime()
         var ok = false
@@ -664,6 +665,11 @@ class GuardService : Service() {
     private fun onProbeResult(ok: Boolean, rttMs: Long?, targetBssid: String) {
         val t = GuardState.target ?: return
         if (!GuardState.connectedBssid.equals(targetBssid, true)) return  // 已漂移/断开：探活结果不判
+        // v16：趋势采样（RSSI + RTT，最多 360 点）
+        run {
+            GuardState.samples.addLast(ProbeSample(System.currentTimeMillis(), currentRssi(), rttMs))
+            while (GuardState.samples.size > 360) GuardState.samples.removeFirst()
+        }
         if (ok) {
             lastRttMs = rttMs
             GuardState.linkOk = true

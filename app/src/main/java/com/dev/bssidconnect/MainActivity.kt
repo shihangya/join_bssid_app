@@ -426,6 +426,7 @@ class MainActivity : AppCompatActivity() {
             val cb = GuardState.connectedBssid ?: currentBssid()
             if (cb != lastSyncedConnected) {
                 lastSyncedConnected = cb
+            trendView?.invalidate()
                 adapter.connectedBssid = cb
                 adapter.connectingBssid = null
                 adapter.notifyDataSetChanged()
@@ -567,6 +568,7 @@ class MainActivity : AppCompatActivity() {
     private val pingLog = java.util.ArrayDeque<String>()
     private var pingDialog: androidx.appcompat.app.AlertDialog? = null
     private var pingTv: android.widget.TextView? = null
+    private var trendView: TrendView? = null
     @Volatile private var pingRunning = false
 
     /** 状态行部分文字标红（BSSID/IP），其余保持默认色；IP 入口版走 setStatusRedIp */
@@ -620,13 +622,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 手动 ping：网关 5 发连测（ICMP 失败回退 TCP:80），结果滚动进弹窗 */
-    private fun runManualPing() {
+    private fun runManualPing(targetOverride: String? = null) {
         if (pingRunning) return
         pingRunning = true
         appendPing("── 立即探测 " + android.text.format.DateFormat.format("HH:mm:ss", System.currentTimeMillis()) + " ──")
-        val gw = currentGateway()
+        val gw = if (!targetOverride.isNullOrBlank()) try { java.net.InetAddress.getByName(targetOverride.trim()) } catch (_: Exception) { currentGateway() } else currentGateway()
         val net = currentWifiNetwork()
-        appendPing("目标：网关 " + (gw?.hostAddress ?: "未获取") + "（Wi-Fi 网络 " + (if (net != null) "已绑定" else "未找到") + "）")
+        appendPing("目标：" + (gw?.hostAddress ?: "未获取") + "（Wi-Fi 网络 " + (if (net != null) "已绑定" else "未找到") + "）")
         if (gw == null || net == null) {
             pingRunning = false
             appendPing("[错误] 未获取到 Wi-Fi 网络/网关（可能是刚启动尚未就绪，稍后重试）")
@@ -660,6 +662,7 @@ class MainActivity : AppCompatActivity() {
             }
             val avg = if (okCnt > 0) "，平均 " + (rttSum / okCnt) + "ms" else "，网关不可达（断流守护会告警）"
             postPing("= 结果：" + okCnt + "/5 通" + avg)
+            run { GuardState.samples.addLast(ProbeSample(System.currentTimeMillis(), wifiManager.connectionInfo?.rssi?.takeIf { it in -100..0 }, if (okCnt > 0) rttSum / okCnt else null)); while (GuardState.samples.size > 360) GuardState.samples.removeFirst() }
             // 对照诊断：不绑定网络直连一发（区分"网关真不可达"vs"绑定网络路径问题"）
             if (okCnt == 0) {
                 var nobOk = false
@@ -733,11 +736,40 @@ class MainActivity : AppCompatActivity() {
         pingTv?.text = pingLog.joinToString("\n")
     }
 
-    /** ping 详情弹窗：显示网关 IP + 日志 + 手动触发按钮 */
+    /** ping 详情弹窗 v16：探测目标可配置 + 信号趋势曲线 + 日志 */
     private fun showPingDialog() {
         val gw = currentGateway()
+
+        val box = android.widget.LinearLayout(this)
+        box.orientation = android.widget.LinearLayout.VERTICAL
+        box.setPadding(48, 24, 48, 24)
+
+        // 探测目标输入行（空=网关）
+        val targetRow = android.widget.LinearLayout(this)
+        targetRow.orientation = android.widget.LinearLayout.HORIZONTAL
+        val etTarget = EditText(this)
+        etTarget.hint = "目标 IP/域名（空=网关）"
+        etTarget.setText(ProbeConfig.target(this))
+        etTarget.textSize = 13f
+        etTarget.isSingleLine = true
+        etTarget.inputType = android.text.InputType.TYPE_CLASS_PHONE  // 数字键盘+点号，避免中文 IME 打成「。」
+        targetRow.addView(
+            etTarget,
+            android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        box.addView(targetRow)
+
+        // v16：信号趋势曲线（RSSI/延迟 最近 30 分钟）
+        val trend = TrendView(this)
+        box.addView(
+            trend,
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, 320
+            )
+        )
+
         val tv = android.widget.TextView(this)
-        tv.setPadding(48, 32, 48, 32)
+        tv.setPadding(0, 16, 0, 0)
         tv.textSize = 13f
         tv.setTextIsSelectable(true)
         pingTv = tv
@@ -746,16 +778,83 @@ class MainActivity : AppCompatActivity() {
             appendPing("点『立即探测』开始；守护探活每 5s 自动跑，结论见状态行『延迟 Nms』")
             appendPing("网关：" + (gw?.hostAddress ?: "未获取"))
         }
+        box.addView(tv)
+
         pingDialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("网关探活详情")
-            .setView(tv)
+            .setOnDismissListener { trendView = null }
+            .setView(box)
             .setPositiveButton("立即探测", null)
+            .setNeutralButton("保存目标", null)
             .setNegativeButton("关闭", null)
             .show()
         pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
-            runManualPing()
+            val t = etTarget.text?.toString()?.trim().orEmpty()
+            ProbeConfig.setTarget(this, t)   // 顺手记住目标
+            runManualPing(if (t.isEmpty()) null else t)
             // positive 默认会 dismiss；探测中保持弹窗可见，实时刷新结果
             pingDialog?.let { d -> if (!d.isShowing) d.show() }
+        }
+        pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+            ProbeConfig.setTarget(this, etTarget.text?.toString()?.trim().orEmpty())
+            Toast.makeText(this, "探活目标已保存：${ProbeConfig.target(this).ifEmpty { "网关(自动)" }}", Toast.LENGTH_SHORT).show()
+            diag("PROBE-TARGET set=${ProbeConfig.target(this)}")
+        }
+    }
+
+    /** v16：信号趋势自绘视图（RSSI dBm 绿线 + 延迟 ms 蓝线，双轴归一化，最近 360 采样点） */
+    inner class TrendView(ctx: android.content.Context) : android.view.View(ctx) {
+        private val pLine = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 3f }
+        private val pText = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 24f }
+        private val pGrid = android.graphics.Paint().apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 1f; color = 0x33000000.toInt() }
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            canvas.drawRect(0f, 0f, w, h, pGrid)
+            val s = GuardState.samples.toList()
+            if (s.isEmpty()) {
+                pText.color = 0xFF888888.toInt()
+                canvas.drawText("趋势图：守护探活每 5s 采样 RSSI/延迟", 20f, h / 2, pText)
+                return
+            }
+            val rssis = s.mapNotNull { it.rssi }
+            val rtts = s.mapNotNull { it.rtt }
+            val rssiMin = (rssis.minOrNull() ?: -100) - 2
+            val rssiMax = (rssis.maxOrNull() ?: -40) + 2
+            val rttMax = ((rtts.maxOrNull() ?: 100) * 1.2 + 10).toFloat()
+            fun yRssi(v: Int) = h - ( (v - rssiMin).toFloat() / ((rssiMax - rssiMin).coerceAtLeast(1)) ) * (h - 40) - 20
+            fun yRtt(v: Long) = h - ( v / rttMax ) * (h - 40) - 20
+            // 网格时间刻度：最早点与最新点
+            pText.color = 0xFF666666.toInt()
+            val t0 = s.first().ts; val t1 = s.last().ts
+            canvas.drawText(android.text.format.DateFormat.format("HH:mm", t0).toString(), 8f, h - 4f, pText)
+            val lbl = android.text.format.DateFormat.format("HH:mm", t1).toString()
+            canvas.drawText(lbl, w - pText.measureText(lbl) - 8f, h - 4f, pText)
+            // RSSI 绿线
+            pLine.color = 0xFF2E7D32.toInt()
+            var prev: Pair<Float, Float>? = null
+            for ((i, sp) in s.withIndex()) {
+                val r = sp.rssi ?: continue
+                val x = if (s.size == 1) w / 2 else (i.toFloat() / (s.size - 1)) * (w - 20) + 10
+                val y = yRssi(r)
+                prev?.let { canvas.drawLine(it.first, it.second, x, y, pLine) }
+                prev = x to y
+            }
+            // 延迟蓝线
+            pLine.color = 0xFF1565C0.toInt()
+            prev = null
+            for ((i, sp) in s.withIndex()) {
+                val r = sp.rtt ?: continue
+                val x = if (s.size == 1) w / 2 else (i.toFloat() / (s.size - 1)) * (w - 20) + 10
+                val y = yRtt(r)
+                prev?.let { canvas.drawLine(it.first, it.second, x, y, pLine) }
+                prev = x to y
+            }
+            // 图例
+            pText.color = 0xFF2E7D32.toInt()
+            canvas.drawText("RSSI ${rssis.lastOrNull() ?: "-"}dBm", 8f, 30f, pText)
+            pText.color = 0xFF1565C0.toInt()
+            canvas.drawText("RTT ${rtts.lastOrNull() ?: "-"}ms", 260f, 30f, pText)
         }
     }
 

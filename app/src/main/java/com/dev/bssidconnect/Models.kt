@@ -218,6 +218,8 @@ class PrefsStringSet(
  * Activity 前台时把 UI 消息从这里取走渲染；Activity 被杀/重建不影响服务侧守护。
  */
 object GuardState {
+    /** v16：探活采样环形缓冲（趋势曲线数据，最多 360 点=30 分钟） */
+    val samples = java.util.ArrayDeque<ProbeSample>()
     @Volatile var target: ApItem? = null
     @Volatile var password: String? = null
     @Volatile var useSuggestion: Boolean = false
@@ -271,3 +273,17 @@ object LockPlanStorage {
         null
     }
 }
+
+/** v16：探活目标配置（空=自动网关回退链；支持 IP/域名） */
+object ProbeConfig {
+    private const val PREFS = "probe_cfg"
+    private const val KEY = "target"
+    fun target(ctx: android.content.Context): String =
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).getString(KEY, "") ?: ""
+    fun setTarget(ctx: android.content.Context, v: String) {
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit().putString(KEY, v.trim()).apply()
+    }
+}
+
+/** v16：探活采样点（信号趋势曲线数据源） */
+class ProbeSample(val ts: Long, val rssi: Int?, val rtt: Long?)
