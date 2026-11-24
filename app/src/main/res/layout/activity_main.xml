@@ -80,6 +80,18 @@
         android:textSize="12sp"
         android:text="MAC：读取中…" />
 
+    <EditText
+        android:id="@+id/etSearch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginTop="6dp"
+        android:hint="搜索 SSID 或 BSSID…"
+        android:imeOptions="actionDone"
+        android:inputType="text"
+        android:maxLines="1"
+        android:textSize="14sp" />
+
     <TextView
         android:id="@+id/tvPerm"
         android:layout_width="match_parent"

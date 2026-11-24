@@ -13,12 +13,14 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.ScanResult
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.net.wifi.WifiNetworkSuggestion
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -95,6 +97,14 @@ class GuardService : Service() {
     private val missMinutes = 3L
     private val missThresholdMs = missMinutes * 60_000L
 
+    // ==== v15 功能4：断流检测（探活守护）参数 ====
+    /** 探活间隔（watchdog 心跳里做，等效 2s 一次太密；独立计时器 5s 一次） */
+    private val probeIntervalMs = 5000L
+    /** 连续失败 N 次判定断流（=25s 无回包） */
+    private val stallFailLimit = 5
+    /** 恢复后连续 N 次成功判定恢复（防抖） */
+    private val stallOkLimit = 2
+
     private var relockCount = 0
     private var relocking = false
     private var relockStartElapsed = 0L
@@ -106,6 +116,17 @@ class GuardService : Service() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val nudgeHandler = Handler(Looper.getMainLooper())
     private val nudgeSteps = longArrayOf(12000L, 24000L, 36000L)
+
+    // ==== v15 功能4：断流检测状态 ====
+    private lateinit var probeHandler: Handler
+    private var stallFails = 0
+    private var stallOks = 0
+    private var stallAlerted = false
+    /** 最近一次探活延迟 ms（null=未知/不在目标上） */
+    @Volatile var lastRttMs: Long? = null
+    private var probeRunning = false
+    private var probeTargetBssid: String? = null
+    private var probeThread: HandlerThread? = null
 
     private fun diag(msg: String) {
         android.util.Log.w("BSC", "SVC|$msg")
@@ -127,6 +148,9 @@ class GuardService : Service() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ALERT, "目标告警", NotificationManager.IMPORTANCE_HIGH)
         )
+        // v15 功能4：探活后台线程
+        probeThread = HandlerThread("bsc-probe").also { it.start() }
+        probeHandler = Handler(probeThread!!.looper)
         diag("SVC-CREATED")
     }
 
@@ -145,6 +169,9 @@ class GuardService : Service() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         nudgeHandler.removeCallbacksAndMessages(null)
+        stopProbe()
+        probeThread?.quitSafely()
+        probeThread = null
         releaseCallback()
         diag("SVC-DESTROYED relock=$relockCount")
         super.onDestroy()
@@ -206,7 +233,8 @@ class GuardService : Service() {
                             diag("SVC-CONNECTED cur==target relock=$relockCount rssi=${currentRssi()}")
                         }
                         // v14c：RSSI/IP 实时刷新——每个心跳都重写 uiMsg（MainActivity uiSync 2s 轮询渲染）
-                        GuardState.uiMsg = "已连接 ${t.bssid}（${t.band}${rssiSuffix()}，防漂移守护中）${ipSuffix()}"
+                        // v15：+ 链路速率 + 探活延迟
+                        GuardState.uiMsg = "已连接 ${t.bssid}（${t.band}${rssiSuffix()}${linkSpeedSuffix()}${rttSuffix()}，防漂移守护中）${ipSuffix()}"
                         if (matchSinceElapsed == 0L) matchSinceElapsed = SystemClock.elapsedRealtime()
                         if (relockCount > 0 &&
                             SystemClock.elapsedRealtime() - matchSinceElapsed >= stableResetMs
@@ -230,9 +258,12 @@ class GuardService : Service() {
             }
             updateGuardNotification(
                 if (relocking) "正在重新锁定 ${t.bssid}…"
-                else if (cur != null && cur.equals(t.bssid, true)) "已锁定 ${t.bssid}（${t.band}${rssiSuffix()}）${ipSuffix()}"
+                else if (cur != null && cur.equals(t.bssid, true)) "已锁定 ${t.bssid}（${t.band}${rssiSuffix()}${linkSpeedSuffix()}${rttSuffix()}）${ipSuffix()}"
                 else "漂移检测中：当前 $cur，目标 ${t.bssid}"
             )
+            // v15 功能4：探活只在锁定成功时跑（onTarget==true）；漂移/无连接时停
+            if (cur != null && cur.equals(t.bssid, true)) ensureProbeRunning(t.bssid)
+            else stopProbe()
             handler.postDelayed(this, watchdogIntervalMs)
         }
     }
@@ -251,6 +282,7 @@ class GuardService : Service() {
             GuardState.connectedBssid = null   // UI 按钮"已连接"还原为"连接"
             if (GuardState.useSuggestion) removeAllSuggestions()
             LockPlanStorage.clear(this)
+            stopProbe()
             GuardState.uiMsg = "放弃锁定：系统反复把连接迁至 $actualBssid（已重锁 $maxRelock 次）"
             stopSelf()
             return
@@ -279,6 +311,7 @@ class GuardService : Service() {
         matchSinceElapsed = 0L
         lastSeenMissingSince = 0L
         alertFired = false
+        stopProbe()   // v15：新会话先停旧探活（连接成功后 watchdog 会重新拉起）
         // 功能3：方案落盘
         LockPlanStorage.save(
             this,
@@ -437,6 +470,20 @@ class GuardService : Service() {
     /** v14c：RSSI 后缀（"，-28 dBm"，前导逗号拼在 band 后；拿不到返回空，避免双逗号） */
     private fun rssiSuffix(): String = currentRssi()?.let { "，$it dBm" } ?: ""
 
+    /**
+     * v15 功能5：链路速率后缀（"，154 Mbps"）——WifiInfo.linkSpeed（单位 Mbps），
+     * 拿不到/为 -1 时返回空串避免双逗号。
+     */
+    private fun linkSpeedSuffix(): String = try {
+        val mbps: Int = wm.connectionInfo?.linkSpeed ?: -1
+        if (mbps > 0) "，$mbps Mbps" else ""
+    } catch (_: Exception) {
+        ""
+    }
+
+    /** v15 功能4：状态行的延迟后缀（"，延迟 3ms"；无数据返回空） */
+    private fun rttSuffix(): String = lastRttMs?.let { "，延迟 ${it}ms" } ?: ""
+
     /** 功能2：目标 BSSID 是否还出现在扫描结果里（消失判定的第二条件） */
     private fun targetVisibleInScan(t: ApItem): Boolean = try {
         // v14b：结果带时间戳过滤——超过 90s 的陈旧缓存不算"可见"（wifi 关闭/系统停扫时缓存不刷新，
@@ -514,6 +561,156 @@ class GuardService : Service() {
             nm.cancel(NOTIF_ALERT_ID)
             updateGuardNotification("已恢复锁定 ${t.bssid}")
         } catch (_: Exception) {
+        }
+    }
+
+    // ==== v15 功能4：断流检测（探活守护） ====
+    // 盲区补齐：守护原本只看"BSSID 在不在"——连着但 ping 不通（AP 假活/DHCP 掉了）不告警。
+    // 探活线程每 5s ping 一次网关；连续 stallFailLimit 次失败 → 高优告警"连接存在但无数据"，
+    // 恢复 stallOkLimit 次连续成功 → 解除。断流判定只在锁定目标上时进行（漂移中交给 DRIFT 逻辑）。
+
+    /** 找当前 Wi-Fi 网络的网关 IP（LinkProperties.routes 首个带 gateway 的 IPv4 默认路由；无则 null） */
+    private fun currentGateway(): java.net.InetAddress? = try {
+        var found: java.net.InetAddress? = null
+        for (network in cm.allNetworks) {
+            val ni = cm.getNetworkCapabilities(network) ?: continue
+            if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+            val lp = cm.getLinkProperties(network) ?: continue
+            // LinkProperties 没有 getGateway()（javap 确认）；网关在 RouteInfo 里
+            for (r in lp.routes) {
+                val gw = r.gateway ?: continue
+                if (gw is java.net.Inet4Address) { found = gw; break }
+            }
+            if (found != null) break
+        }
+        found
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 当前 Wi-Fi 网络（探活绑定用；无则 null） */
+    private fun currentWifiNetwork(): Network? = try {
+        cm.allNetworks.firstOrNull { n ->
+            cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 探活后台线程体：ping 网关（ICMP isReachable，绑定网络）→ 回主线程判定 */
+    private fun probeLoop(targetBssid: String) {
+        val gw = currentGateway()
+        val net = currentWifiNetwork()
+        val t0 = SystemClock.elapsedRealtime()
+        var ok = false
+        if (gw != null && net != null) {
+            try {
+                // icmp 用 InetAddress.isReachable（内部走 ICMP/回显，需要 NAT 时回退 TCP 7 端口）
+                ok = gw.isReachable(1500)
+            } catch (_: Exception) {
+                ok = false
+            }
+            // ICMP 被系统限制时（Android 上常见），回退 TCP 80 connect 探测
+            if (!ok) {
+                var sock: java.net.Socket? = null
+                try {
+                    sock = java.net.Socket()
+                    net.bindSocket(sock)
+                    sock.connect(java.net.InetSocketAddress(gw, 80), 1500)
+                    ok = true
+                } catch (_: Exception) {
+                    ok = false
+                } finally {
+                    try { sock?.close() } catch (_: Exception) {}
+                }
+            }
+        }
+        val rtt = if (ok) SystemClock.elapsedRealtime() - t0 else null
+        handler.post { onProbeResult(ok, rtt, targetBssid) }
+    }
+
+    /** 主线程判定：连续失败→告警；恢复→解除；更新 lastRttMs */
+    private fun onProbeResult(ok: Boolean, rttMs: Long?, targetBssid: String) {
+        val t = GuardState.target ?: return
+        if (!GuardState.connectedBssid.equals(targetBssid, true)) return  // 已漂移/断开：探活结果不判
+        if (ok) {
+            lastRttMs = rttMs
+            stallFails = 0
+            stallOks++
+            if (stallAlerted && stallOks >= stallOkLimit) {
+                stallAlerted = false
+                diag("STALL-RECOVER rtt=${rttMs}ms")
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                try { nm.cancel(NOTIF_ALERT_ID) } catch (_: Exception) {}
+                GuardState.uiMsg = "网络已恢复（${rttMs}ms）${t.bssid}${rssiSuffix()}${linkSpeedSuffix()}${rttSuffix()}${ipSuffix()}"
+            }
+        } else {
+            lastRttMs = null
+            stallOks = 0
+            stallFails++
+            if (!stallAlerted && stallFails >= stallFailLimit) {
+                stallAlerted = true
+                diag("STALL-FIRE fails=$stallFails gw_unreachable")
+                notifyStall(t)
+            }
+        }
+    }
+
+    /** 断流告警（高优通道，横幅） */
+    private fun notifyStall(t: ApItem) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val pi = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val b = if (Build.VERSION.SDK_INT >= 26)
+            Notification.Builder(this, CHANNEL_ALERT) else Notification.Builder(this)
+        b.setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("连接存在但无数据")
+            .setContentText("${t.ssid} ${t.bssid} 网关连续 $stallFailLimit 次探测失败（约 ${stallFailLimit * 5}s），网络可能断流")
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+        try {
+            nm.notify(NOTIF_ALERT_ID, b.build())
+            diag("ALERT-NOTIFIED stall ${t.bssid}")
+        } catch (e: Exception) {
+            diag("ALERT-FAIL stall ${e.message}")
+        }
+    }
+
+    /** 确保探活循环在跑（目标切换时重启线程绑定新网关） */
+    private fun ensureProbeRunning(targetBssid: String) {
+        if (probeRunning && probeTargetBssid == targetBssid) return
+        stopProbe()
+        probeTargetBssid = targetBssid
+        probeRunning = true
+        stallFails = 0
+        stallOks = 0
+        stallAlerted = false
+        probeHandler.post(object : Runnable {
+            override fun run() {
+                if (!probeRunning) return
+                val tb = probeTargetBssid ?: return
+                probeLoop(tb)
+                probeHandler.postDelayed(this, probeIntervalMs)
+            }
+        })
+        diag("PROBE-START target=$targetBssid interval=${probeIntervalMs}ms")
+    }
+
+    private fun stopProbe() {
+        probeRunning = false
+        probeTargetBssid = null
+        lastRttMs = null
+        stallFails = 0
+        stallOks = 0
+        if (stallAlerted) {
+            stallAlerted = false
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancel(NOTIF_ALERT_ID)
+            } catch (_: Exception) {}
         }
     }
 }

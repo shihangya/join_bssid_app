@@ -147,8 +147,51 @@ object LockEngine {
     }
 }
 
-/** SSID→密码 记忆库：连接时记住密码，同 SSID 再次弹窗自动填入（与锁定方案的 lock_pw 独立） */
-object PasswordStore {
+/**
+ * v15 功能3：SharedPreferences-backed 可变 Set——给 NetworkAdapter 的展开状态持久化用。
+ * 内存操作实时回写 prefs（apply 异步落盘），App 重启后展开状态保持。
+ */
+class PrefsStringSet(
+    ctx: android.content.Context,
+    prefsName: String,
+    key: String
+) : AbstractMutableSet<String>() {
+
+    private val sp = ctx.getSharedPreferences(prefsName, android.content.Context.MODE_PRIVATE)
+    private val key = key
+    private val inner = LinkedHashSet<String>(sp.getStringSet(key, emptySet()) ?: emptySet())
+
+    override val size: Int get() = inner.size
+
+    override fun add(element: String): Boolean {
+        val changed = inner.add(element)
+        if (changed) flush()
+        return changed
+    }
+
+    override fun remove(element: String): Boolean {
+        val changed = inner.remove(element)
+        if (changed) flush()
+        return changed
+    }
+
+    override fun iterator(): MutableIterator<String> = object : MutableIterator<String> {
+        private val it = inner.iterator()
+        private var last: String? = null
+        override fun hasNext() = it.hasNext()
+        override fun next() = it.next().also { last = it }
+        override fun remove() {
+            it.remove()
+            flush()
+        }
+    }
+
+    private fun flush() {
+        sp.edit().putStringSet(key, LinkedHashSet(inner)).apply()
+    }
+}
+
+/** SSID→密码 记忆库：连接时记住密码，同 SSID 再次弹窗自动填入（与锁定方案的 lock_pw 独立） */object PasswordStore {
     private const val PREFS = "pw_store"
 
     fun save(ctx: android.content.Context, ssid: String, password: String) {

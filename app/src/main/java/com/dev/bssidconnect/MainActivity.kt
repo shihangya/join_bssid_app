@@ -32,7 +32,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.textfield.TextInputEditText
+import android.widget.EditText
 
 class MainActivity : AppCompatActivity() {
 
@@ -130,6 +130,13 @@ class MainActivity : AppCompatActivity() {
     private val SCAN_THROTTLE_MS = 240_000L
     /** v14c：本地提示（限流等）在状态行的保持截止时间——期间服务心跳/扫描刷新不覆盖 */
     private var localMsgHoldUntil = 0L
+
+    // ==== v15 功能1：AP 列表搜索/过滤 ====
+    private lateinit var etSearch: EditText
+    /** 当前过滤关键字（小写；空=不过滤） */
+    private var filterText: String = ""
+    /** 最近一次完整扫描结果（过滤在此副本上做，避免反复读系统缓存） */
+    private var lastResults: List<ScanResult> = emptyList()
 
     // ==== 功能2：厂商默认模式 + 模式持久化 ====
     // SharedPreferences("bsc_prefs") 键 mode_suggestion；无存储值时按厂商推断默认值。
@@ -272,6 +279,7 @@ class MainActivity : AppCompatActivity() {
         btnUnlock = findViewById(R.id.btnUnlock)
         tvMac = findViewById(R.id.tvMac)
         tvMac.setOnClickListener { showMacHelpDialog() }
+        etSearch = findViewById(R.id.etSearch)
 
         showMacInfo()
 
@@ -322,9 +330,21 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "已解锁：清除锁定方案并停止守护", Toast.LENGTH_SHORT).show()
         }
 
-        adapter = NetworkAdapter(emptyList(), onConnect = { ap -> onConnectClicked(ap) })
+        // v15 功能3：展开状态持久化（SharedPreferences-backed StringSet）
+        val expandedStore = PrefsStringSet(this, "ui_state", "expanded_ssids")
+        adapter = NetworkAdapter(emptyList(), onConnect = { ap -> onConnectClicked(ap) }, expandedStore = expandedStore)
         recycler.layoutManager = LinearLayoutManager(this)
         recycler.adapter = adapter
+
+        // v15 功能1：搜索框——输入即过滤 SSID/BSSID（不区分大小写）
+        etSearch.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                filterText = s?.toString()?.trim() ?: ""
+                renderResults()
+            }
+        })
 
         findViewById<TextView>(R.id.btnScan).setOnClickListener { startScan() }
         tvPerm.setOnClickListener { requestNeededPermissions() }
@@ -491,14 +511,26 @@ class MainActivity : AppCompatActivity() {
         // v14c：本地提示保持期内不覆盖（限流提示等）
         if (SystemClock.elapsedRealtime() < localMsgHoldUntil) return
         val results = wifiManager.scanResults
+        lastResults = results
         adapter.connectedBssid = currentBssid()
         if (results.isEmpty()) {
             adapter.update(emptyList())
             tvStatus.text = "暂无扫描结果，点右上角刷新"
             return
         }
-        adapter.update(groupBySsid(results))
-        tvStatus.text = "共 ${results.size} 个接入点"
+        // v15 功能1：按关键字过滤 SSID/BSSID（不区分大小写；空关键字=全部）
+        val kw = filterText.lowercase()
+        val filtered = if (kw.isEmpty()) results else results.filter {
+            (it.SSID ?: "").lowercase().contains(kw) || it.BSSID.lowercase().contains(kw)
+        }
+        if (filtered.isEmpty()) {
+            adapter.update(emptyList())
+            tvStatus.text = "无匹配 \"${filterText}\" 的接入点（共 ${results.size} 个）"
+            return
+        }
+        adapter.update(groupBySsid(filtered))
+        tvStatus.text = if (kw.isEmpty()) "共 ${results.size} 个接入点"
+        else "匹配 ${filtered.size}/${results.size} 个接入点"
         // 已在守护目标上（锁定/已连接态）时，扫描刷新保留连接信息并追加 IP
         // v14：目标可能在服务侧（lockedTarget=null 但 GuardState.target 非空）
         val target = lockedTarget ?: GuardState.target
@@ -694,7 +726,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPasswordDialog(ap: ApItem) {
         val view = layoutInflater.inflate(R.layout.dialog_password, null)
-        val et = view.findViewById<TextInputEditText>(R.id.etPassword)
+        val et = view.findViewById<EditText>(R.id.etPassword)
         val cbRemember = view.findViewById<android.widget.CheckBox>(R.id.cbRemember)
         val info = view.findViewById<TextView>(R.id.tvInfo)
         info.text = "SSID: ${ap.ssid}\nBSSID: ${ap.bssid}（${ap.band}，${ap.secure}）"

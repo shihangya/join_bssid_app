@@ -11,13 +11,17 @@ import androidx.recyclerview.widget.RecyclerView
 /**
  * 二级列表：外层 SSID 分组（可展开），内层 BSSID 明细（每项带"连接"按钮）。
  * 简单实现：展开状态存在 group 层，不跨 ViewModel。
+ *
+ * @param expandedStore v15 功能3：展开状态的外部持久化集合（Activity 提供，
+ *                      底层为 SharedPreferences-backed Set；null 则退化为内存态）
  */
 class NetworkAdapter(
     private var groups: List<SsidGroup>,
-    private val onConnect: (ApItem) -> Unit
+    private val onConnect: (ApItem) -> Unit,
+    private val expandedStore: MutableSet<String>? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-    private val expanded = mutableSetOf<String>()
+    private val expanded: MutableSet<String> = expandedStore ?: mutableSetOf<String>()
 
     fun update(newGroups: List<SsidGroup>) {
         groups = newGroups
