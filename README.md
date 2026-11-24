@@ -38,6 +38,32 @@ Android Wi-Fi BSSID 精确连接工具（Kotlin，minSdk 33 / targetSdk 36）。
 - 扫描限流提示（4 次/2min 系统限流时显示剩余等待秒数，不空发）
 - 连接状态自动刷新（连接中→已连接，含服务侧接管路径）
 
+### ADB 意图接口（v17，远程控制/批量测试自动化）
+
+电脑端 adb 一条命令即可远程锁定/解锁/查状态，无需触屏——批量测试脚本（循环"重置→锁定→测流量→下一台"）的基础设施。参数经 `startForegroundService` 交给 `GuardService.beginGuardSession`，与 UI 锁定走完全相同链路（方案落盘、nudge、防漂移守护全套继承）。
+
+```bash
+# 锁定（必填 ssid/bssid；可选 password/mode，mode=sug|spec 缺省按当前/厂商默认）
+adb shell am broadcast -a com.dev.bssidconnect.LOCK \
+  -n com.dev.bssidconnect/.AdbCommandReceiver \
+  --es ssid g10 --es bssid 6C:87:20:31:CE:40 \
+  --es password 123123123 --es mode sug
+
+# 解锁（清方案 + 清建议 + 停守护）
+adb shell am broadcast -a com.dev.bssidconnect.UNLOCK \
+  -n com.dev.bssidconnect/.AdbCommandReceiver
+
+# 查状态（resultData 同步回显 target/connected/linkOk/状态行文案）
+adb shell am broadcast -a com.dev.bssidconnect.STATUS \
+  -n com.dev.bssidconnect/.AdbCommandReceiver
+```
+
+说明：
+- 回执三通道：`am broadcast` 的 `resultData` 同步可见；`diag.txt` 的 `ADB|` 行；logcat `BSC-ADB` tag
+- 必须带 `-n com.dev.bssidconnect/.AdbCommandReceiver`（显式 component；vivo 对无 component 的自定义 action 隐式广播不派发）
+- 实测（vivo Suggestion）：LOCK 后 4s 内自动锁中目标（含切 5G BSSID 的目标切换）；一加 Specifier 模式下系统会弹网络选择确认页需人工点一下目标条目，**全自动场景建议 `--es mode sug`**
+- 结果核验：`adb shell cmd wifi status` 看 `Requesting package name: com.dev.bssidconnect`
+
 ## 实测兼容性结论
 
 | 设备 | Specifier setBssid | Suggestion setBssid | 推荐模式 |
@@ -57,9 +83,7 @@ gradle assembleDebug
 
 要求：JDK 17+、Android SDK 36（platforms;android-36）。无 Compose，纯 View 体系。
 
-权限：ACCESS_FINE_LOCATION / NEARBY_WIFI_DEVICES / POST_NOTIFICATIONS / FOREGROUND_SERVICE(_CONNECTED_DEVICE) / INTERNET / RECEIVE_BOOT_COMPLETED。
-
-## 已知平台限制
+权限：ACCESS_FINE_LOCATION / NEARBY_WIFI_DEVICES / POST_NOTIFICATIONS / FOREGROUND_SERVICE(_CONNECTED_DEVICE) / INTERNET / RECEIVE_BOOT_COMPLETED。## 已知平台限制
 
 - **vivo**：`WifiNetworkSpecifier` 的 BSSID 约束被厂商连接管理无视（连 `cmd wifi connect-network -b` 也拦不住）；强信号驻留网络竞争时 Suggestion 请求会挂起不动作（删除驻留网络后一次提交即锁定）
 - **ColorOS**：BOOT_COMPLETED 对非白名单应用标记 `SKIPPED (reason: remote app)`，需手动开启自启动；Suggestion 候选会输给已保存网络（Specifier 可钉死）
@@ -75,3 +99,4 @@ gradle assembleDebug
 - v15：搜索过滤 + 展开记忆 + 断流探活告警 + 速率显示；v15b 探活详情弹窗；v15c 补 INTERNET 权限（探活根因修复）
 - v15d：IP 颜色随探活（通绿/断红）+ 移除 MAC 行
 - v16：探活目标可配置 + 信号趋势曲线；v16b 弹窗定高；v16c 按钮重排；v16d dismiss 防抖
+- v17：ADB 意图接口（LOCK/UNLOCK/STATUS 远程控制，GuardService 会话 intent 分发）
