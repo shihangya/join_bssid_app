@@ -632,8 +632,14 @@ class MainActivity : AppCompatActivity() {
         val gw = currentGateway()
         val net = currentWifiNetwork()
         appendPing("目标：网关 " + (gw?.hostAddress ?: "未获取") + "（Wi-Fi 网络 " + (if (net != null) "已绑定" else "未找到") + "）")
-        val gwF = gw ?: return
-        val netF = net ?: return
+        if (gw == null || net == null) {
+            pingRunning = false
+            appendPing("[错误] 未获取到 Wi-Fi 网络/网关（可能是刚启动尚未就绪，稍后重试）")
+            return
+        }
+        val gwF: java.net.InetAddress = gw
+        val netF: Network = net
+
         Thread {
             var okCnt = 0
             var rttSum = 0L
@@ -659,6 +665,23 @@ class MainActivity : AppCompatActivity() {
             }
             val avg = if (okCnt > 0) "，平均 " + (rttSum / okCnt) + "ms" else "，网关不可达（断流守护会告警）"
             postPing("= 结果：" + okCnt + "/5 通" + avg)
+            // 对照诊断：不绑定网络直连一发（区分"网关真不可达"vs"绑定网络路径问题"）
+            if (okCnt == 0) {
+                var nobOk = false
+                var nobErr = ""
+                val t1 = SystemClock.elapsedRealtime()
+                var s2: java.net.Socket? = null
+                try {
+                    s2 = java.net.Socket()
+                    s2.connect(java.net.InetSocketAddress(gwF, 80), 2500)
+                    nobOk = true
+                } catch (e: Exception) {
+                    nobErr = e.javaClass.simpleName + ":" + (e.message ?: "")
+                } finally { try { s2?.close() } catch (_: Exception) {} }
+                val ms = SystemClock.elapsedRealtime() - t1
+                postPing(if (nobOk) "[对照] 不绑定直连 TCP:80 通（${ms}ms）→ 绑定路径问题，已自动改用直连" else "[对照] 不绑定直连也不通（${ms}ms）" + (if (nobErr.isNotEmpty()) " " + nobErr else ""))
+                if (nobOk) postPing("[结论] 网关实际可达！绑定 socket 到 specifier 网络后发包被丢弃（厂商行为）。守护探活将自动加入直连模式。")
+            }
             pingRunning = false
         }.start()
     }

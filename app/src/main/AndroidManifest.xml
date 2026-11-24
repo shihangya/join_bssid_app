@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- 网关探活（ping/socket）必需：无此权限进程不注入 inet(3003) 组，socket() 直接 EPERM -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 13+ 附近设备权限，声明 neverForLocation 后不需要定位 -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
