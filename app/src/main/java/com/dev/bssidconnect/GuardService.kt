@@ -159,6 +159,24 @@ class GuardService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // v17：AdbCommandReceiver 经 startForegroundService 下发的远程锁定会话
+        if (intent?.action == AdbCommandReceiver.ACTION_SESSION) {
+            startForeground(NOTIF_GUARD_ID, buildGuardNotification("启动中…"))
+            val ssid = intent.getStringExtra("ssid") ?: ""
+            val bssid = intent.getStringExtra("bssid") ?: ""
+            val password = intent.getStringExtra("password")
+            val band = intent.getStringExtra("band") ?: ""
+            val secure = intent.getStringExtra("secure") ?: "OPEN"
+            if (bssid.isNotBlank() && ssid.isNotBlank()) {
+                val ap = ApItem(
+                    bssid = bssid, ssid = ssid, level = 0, frequency = 0,
+                    channel = 0, band = band, secure = secure, isWifi6Plus = false
+                )
+                beginGuardSession(ap, password)
+                diag("ADB-SESSION via intent bssid=$bssid mode=${if (GuardState.useSuggestion) "sug" else "spec"}")
+            }
+            return START_STICKY
+        }
         startForeground(NOTIF_GUARD_ID, buildGuardNotification("启动中…"))
         // START_STICKY：进程被杀后系统尝试重建服务，配合 GuardState 持久状态自动续守护
         handler.removeCallbacks(watchdog)

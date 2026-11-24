@@ -50,6 +50,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- v17：ADB 意图接口（adb shell am broadcast 远程锁定/解锁/查状态） -->
+        <receiver
+            android:name=".AdbCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.dev.bssidconnect.LOCK" />
+                <action android:name="com.dev.bssidconnect.UNLOCK" />
+                <action android:name="com.dev.bssidconnect.STATUS" />
+            </intent-filter>
+        </receiver>
+
         <!-- v14：前台服务常驻守护 + 目标消失告警 -->
         <service
             android:name=".GuardService"
