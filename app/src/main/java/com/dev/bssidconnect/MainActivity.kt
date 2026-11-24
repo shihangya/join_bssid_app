@@ -295,9 +295,8 @@ class MainActivity : AppCompatActivity() {
         dashLink = findViewById(R.id.dashLink)
         dashTrend = findViewById(R.id.dashTrend)
         findViewById<TextView>(R.id.btnDashHide).setOnClickListener { setDashboard(false) }
-        // 仪表盘开关持久化（重启 App 保持上次选择）
-        dashOpen = getSharedPreferences("ui_state", Context.MODE_PRIVATE).getBoolean("dash_open", false)
-        setDashboard(dashOpen)
+        // v18c：启动默认收起（面板只在用户手动点开时展示，不跨启动记忆）
+        setDashboard(false)
         // v15b: 状态行整行点击兜底打开 ping 详情（IP 红字有 ClickableSpan，这里保证任何点按都能进）
         tvStatus.setOnClickListener {
             // v16c：弹窗刚 dismiss（1.5s 内）忽略状态行点击——防"关完连击又弹开"
@@ -507,12 +506,10 @@ class MainActivity : AppCompatActivity() {
         dashTrend?.invalidate()
     }
 
-    /** v18：仪表盘展开/收起（持久化到 ui_state） */
+    /** v18c：仪表盘展开/收起（仅会话内状态，启动默认收起不持久化） */
     private fun setDashboard(open: Boolean) {
         dashOpen = open
         dashPanel.visibility = if (open) View.VISIBLE else View.GONE
-        getSharedPreferences("ui_state", Context.MODE_PRIVATE)
-            .edit().putBoolean("dash_open", open).apply()
         if (open) updateDashboard()
     }
 
