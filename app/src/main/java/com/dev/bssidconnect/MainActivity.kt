@@ -278,7 +278,10 @@ class MainActivity : AppCompatActivity() {
         btnUnlock = findViewById(R.id.btnUnlock)
         etSearch = findViewById(R.id.etSearch)
         // v15b: 状态行整行点击兜底打开 ping 详情（IP 红字有 ClickableSpan，这里保证任何点按都能进）
-        tvStatus.setOnClickListener { showPingDialog() }
+        tvStatus.setOnClickListener {
+            // v16c：弹窗刚 dismiss（1.5s 内）忽略状态行点击——防"关完连击又弹开"
+            if (SystemClock.elapsedRealtime() - lastDialogDismissAt > 1500L) showPingDialog()
+        }
 
         // 功能2：首次启动按厂商推断默认模式；已有选择则恢复
         useSuggestion = loadModePref()
@@ -569,6 +572,7 @@ class MainActivity : AppCompatActivity() {
     private var pingDialog: androidx.appcompat.app.AlertDialog? = null
     private var pingTv: android.widget.TextView? = null
     private var trendView: TrendView? = null
+    private var lastDialogDismissAt = 0L   // v16c：弹窗关闭时刻（防抖用）
     @Volatile private var pingRunning = false
 
     /** 状态行部分文字标红（BSSID/IP），其余保持默认色；IP 入口版走 setStatusRedIp */
@@ -783,7 +787,7 @@ class MainActivity : AppCompatActivity() {
 
         pingDialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("网关探活详情")
-            .setOnDismissListener { trendView = null }
+            .setOnDismissListener { trendView = null; lastDialogDismissAt = SystemClock.elapsedRealtime() }
             .setView(box)
             .setPositiveButton("关闭", null)   // 右侧=关闭，默认 dismiss，符合直觉（v16c 修"点两下才能关"）
             .setNeutralButton("立即探测", null)
