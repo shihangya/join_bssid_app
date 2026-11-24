@@ -569,24 +569,55 @@ class GuardService : Service() {
     // 探活线程每 5s ping 一次网关；连续 stallFailLimit 次失败 → 高优告警"连接存在但无数据"，
     // 恢复 stallOkLimit 次连续成功 → 解除。断流判定只在锁定目标上时进行（漂移中交给 DRIFT 逻辑）。
 
-    /** 找当前 Wi-Fi 网络的网关 IP（LinkProperties.routes 首个带 gateway 的 IPv4 默认路由；无则 null） */
-    private fun currentGateway(): java.net.InetAddress? = try {
+    /** 找当前 Wi-Fi 网络的网关 IP：routes IPv4 gateway（跳过 0.0.0.0）→ DHCP 服务器 → 本机 IP 推 .1 */
+    private fun currentGateway(): java.net.InetAddress? {
         var found: java.net.InetAddress? = null
+        try {
+            for (network in cm.allNetworks) {
+                val ni = cm.getNetworkCapabilities(network) ?: continue
+                if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+                val lp = cm.getLinkProperties(network) ?: continue
+                for (r in lp.routes) {
+                    val gw = r.gateway ?: continue
+                    if (gw is java.net.Inet4Address && !gw.isAnyLocalAddress && gw.hostAddress != "0.0.0.0") { found = gw; break }
+                }
+                if (found != null) break
+            }
+            if (found == null) {
+                for (network in cm.allNetworks) {
+                    val ni = cm.getNetworkCapabilities(network) ?: continue
+                    if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+                    val lp = cm.getLinkProperties(network) ?: continue
+                    val d = lp.dhcpServerAddress
+                    if (d != null && d is java.net.Inet4Address && !d.isAnyLocalAddress) { found = d; break }
+                }
+            }
+            if (found == null) {
+                val ip = currentIp()
+                if (ip != null) {
+                    val dot = ip.lastIndexOf(46.toChar())
+                    if (dot > 0) found = java.net.InetAddress.getByName(ip.substring(0, dot) + ".1")
+                }
+            }
+        } catch (_: Exception) {}
+        return found
+    }
+
+    /** 当前 Wi-Fi 的 IPv4 地址（网关回退推 .1 用） */
+    private fun currentIp(): String? = try {
+        var found: String? = null
         for (network in cm.allNetworks) {
             val ni = cm.getNetworkCapabilities(network) ?: continue
             if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
             val lp = cm.getLinkProperties(network) ?: continue
-            // LinkProperties 没有 getGateway()（javap 确认）；网关在 RouteInfo 里
-            for (r in lp.routes) {
-                val gw = r.gateway ?: continue
-                if (gw is java.net.Inet4Address) { found = gw; break }
+            for (la in lp.linkAddresses) {
+                val a = la.address
+                if (a is java.net.Inet4Address) { found = a.hostAddress; break }
             }
             if (found != null) break
         }
         found
-    } catch (_: Exception) {
-        null
-    }
+    } catch (_: Exception) { null }
 
     /** 当前 Wi-Fi 网络（探活绑定用；无则 null） */
     private fun currentWifiNetwork(): Network? = try {

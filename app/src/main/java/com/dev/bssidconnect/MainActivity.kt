@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
                                 relockCount = 0
                             }
                             if (driftStrikes > 0) {
-                                setStatusRed("已锁定 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
+                                setStatusRedIp("已锁定 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
                             }
                             driftStrikes = 0
                         }
@@ -280,6 +280,8 @@ class MainActivity : AppCompatActivity() {
         tvMac = findViewById(R.id.tvMac)
         tvMac.setOnClickListener { showMacHelpDialog() }
         etSearch = findViewById(R.id.etSearch)
+        // v15b: 状态行整行点击兜底打开 ping 详情（IP 红字有 ClickableSpan，这里保证任何点按都能进）
+        tvStatus.setOnClickListener { showPingDialog() }
 
         showMacInfo()
 
@@ -293,7 +295,7 @@ class MainActivity : AppCompatActivity() {
         val savedPlan = LockPlanStorage.load(this)
         if (savedPlan != null) {
             btnUnlock.visibility = View.VISIBLE
-            setStatusRed("恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）${ipSuffix()}", savedPlan.bssid, ipSuffix().removePrefix("，"))
+            setStatusRedIp("恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）${ipSuffix()}", savedPlan.bssid, ipSuffix().removePrefix("，"))
             diag("PLAN-RESTORE bssid=${savedPlan.bssid} mode=${if (savedPlan.useSuggestion) "sug" else "spec"}")
             val ap = ApItem(
                 bssid = savedPlan.bssid, ssid = savedPlan.ssid, level = 0,
@@ -394,9 +396,9 @@ class MainActivity : AppCompatActivity() {
             val cur = currentBssid() ?: lastGoodBssid
             tvStatus.text = msg
             if (cur != null && cur.equals(t.bssid, true)) {
-                setStatusRed(msg, t.bssid, currentIp()?.let { "IP：$it" } ?: "")
+                setStatusRedIp(msg, t.bssid, currentIp()?.let { "IP：$it" } ?: "")
             } else {
-                setStatusRed(msg, t.bssid)
+                setStatusRedIp(msg, t.bssid)
             }
         } else if (msg.isNotEmpty()) {
             tvStatus.text = msg
@@ -404,7 +406,7 @@ class MainActivity : AppCompatActivity() {
         // v14c：锁定目标但服务尚未产出文案时（提交中/恢复中），本地补渲染"已连接"态
         // （服务侧每 2s 心跳会写 uiMsg，这里兜底避免短暂空白）
         if (t != null && msg.isEmpty() && (cur0() ?: lastGoodBssid).equals(t.bssid, true)) {
-            setStatusRed("已连接 ${t.bssid}（${t.band}，防漂移守护中）${ipSuffix()}", t.bssid, ipSuffix().removePrefix("，"))
+            setStatusRedIp("已连接 ${t.bssid}（${t.band}，防漂移守护中）${ipSuffix()}", t.bssid, ipSuffix().removePrefix("，"))
         }
     }
 
@@ -536,7 +538,7 @@ class MainActivity : AppCompatActivity() {
         val target = lockedTarget ?: GuardState.target
         val cur = currentBssid() ?: lastGoodBssid
         if (target != null && cur != null && cur.equals(target.bssid, ignoreCase = true)) {
-            setStatusRed("已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
+            setStatusRedIp("已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}", target.bssid, ipSuffix().removePrefix("，"))
             GuardState.uiMsg = "已连接 ${target.bssid}（${target.band}，防漂移守护中）${ipSuffix()}"
         }
     }
@@ -567,8 +569,22 @@ class MainActivity : AppCompatActivity() {
     /** 拼接到状态文案尾部的 IP 后缀（红色由状态行统一着色不需要，直接跟文本） */
     private fun ipSuffix(): String = currentIp()?.let { "，IP：$it" } ?: ""
 
-    /** 状态行部分文字标红（BSSID/IP），其余保持默认色 */
+    /** 手动 ping 详情弹窗状态（弹窗内实时刷新） */
+    private val pingLog = java.util.ArrayDeque<String>()
+    private var pingDialog: androidx.appcompat.app.AlertDialog? = null
+    private var pingTv: android.widget.TextView? = null
+    @Volatile private var pingRunning = false
+
+    /** 状态行部分文字标红（BSSID/IP），其余保持默认色；IP 入口版走 setStatusRedIp */
     private fun setStatusRed(base: String, vararg redParts: String) {
+        setStatusRedImpl(base, false, *redParts)
+    }
+
+    private fun setStatusRedIp(base: String, vararg redParts: String) {
+        setStatusRedImpl(base, true, *redParts)
+    }
+
+    private fun setStatusRedImpl(base: String, ipClickable: Boolean, vararg redParts: String) {
         val ssb = android.text.SpannableStringBuilder(base)
         val paint = tvStatus.paint
         for (part in redParts) {
@@ -583,7 +599,146 @@ class MainActivity : AppCompatActivity() {
                 idx = ssb.indexOf(part, idx + part.length)
             }
         }
+        // v15b: IP 段叠加可点击入口（弹手动 ping 详情）
+        if (ipClickable) {
+            val ip = currentIp()
+            if (ip != null) {
+                val ipLabel = "IP：$ip"
+                val i = ssb.indexOf(ipLabel)
+                if (i >= 0) {
+                    ssb.setSpan(
+                        object : android.text.style.ClickableSpan() {
+                            override fun onClick(widget: android.view.View) { showPingDialog() }
+                            override fun updateDrawState(ds: android.text.TextPaint) {
+                                ds.color = 0xFFD32F2F.toInt()
+                                ds.isUnderlineText = true
+                            }
+                        },
+                        i, i + ipLabel.length,
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    tvStatus.movementMethod = android.text.method.LinkMovementMethod.getInstance()
+                }
+            }
+        }
         tvStatus.text = ssb
+    }
+
+    /** 手动 ping：网关 5 发连测（ICMP 失败回退 TCP:80），结果滚动进弹窗 */
+    private fun runManualPing() {
+        if (pingRunning) return
+        pingRunning = true
+        appendPing("── 立即探测 " + android.text.format.DateFormat.format("HH:mm:ss", System.currentTimeMillis()) + " ──")
+        val gw = currentGateway()
+        val net = currentWifiNetwork()
+        appendPing("目标：网关 " + (gw?.hostAddress ?: "未获取") + "（Wi-Fi 网络 " + (if (net != null) "已绑定" else "未找到") + "）")
+        val gwF = gw ?: return
+        val netF = net ?: return
+        Thread {
+            var okCnt = 0
+            var rttSum = 0L
+            for (seq in 1..5) {
+                
+                val t0 = SystemClock.elapsedRealtime()
+                var ok = try { gwF.isReachable(1500) } catch (_: Exception) { false }
+                var via = "ICMP"
+                if (!ok) {
+                    var sock: java.net.Socket? = null
+                    try {
+                        sock = java.net.Socket()
+                        netF.bindSocket(sock)
+                        sock.connect(java.net.InetSocketAddress(gwF, 80), 1500)
+                        ok = true
+                        via = "TCP:80"
+                    } catch (_: Exception) { ok = false } finally { try { sock?.close() } catch (_: Exception) {} }
+                }
+                val rtt = if (ok) SystemClock.elapsedRealtime() - t0 else -1L
+                if (ok) { okCnt++; rttSum += rtt }
+                postPing("#" + seq + " " + (if (ok) "通 via " + via + " " + rtt + "ms" else "不通（ICMP+TCP:80 均 1500ms 超时）"))
+                try { Thread.sleep(500) } catch (_: Exception) {}
+            }
+            val avg = if (okCnt > 0) "，平均 " + (rttSum / okCnt) + "ms" else "，网关不可达（断流守护会告警）"
+            postPing("= 结果：" + okCnt + "/5 通" + avg)
+            pingRunning = false
+        }.start()
+    }
+
+    private fun currentGateway(): java.net.InetAddress? {
+        // 1) routes 里的 IPv4 gateway（跳过 0.0.0.0 on-link 默认路由）
+        try {
+            for (network in connectivityManager.allNetworks) {
+                val ni = connectivityManager.getNetworkCapabilities(network) ?: continue
+                if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+                val lp = connectivityManager.getLinkProperties(network) ?: continue
+                for (r in lp.routes) {
+                    val gw = r.gateway ?: continue
+                    if (gw is java.net.Inet4Address && !gw.isAnyLocalAddress && gw.hostAddress != "0.0.0.0") return gw
+                }
+            }
+        } catch (_: Exception) {}
+        // 2) DHCP 服务器地址
+        try {
+            for (network in connectivityManager.allNetworks) {
+                val ni = connectivityManager.getNetworkCapabilities(network) ?: continue
+                if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+                val lp = connectivityManager.getLinkProperties(network) ?: continue
+                val d = lp.dhcpServerAddress
+                if (d != null && d is java.net.Inet4Address && !d.isAnyLocalAddress) return d
+            }
+        } catch (_: Exception) {}
+        // 3) 由本机 IP 推 .1（常见网关约定）
+        try {
+            val ip = currentIp() ?: return null
+            val seg = ip.substringBeforeLast(".")
+            return java.net.InetAddress.getByName("$seg.1")
+        } catch (_: Exception) {
+            // 全部回退失败
+        }
+        return null
+    }
+
+    private fun currentWifiNetwork(): Network? = try {
+        connectivityManager.allNetworks.firstOrNull { n ->
+            connectivityManager.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        }
+    } catch (_: Exception) { null }
+
+    private fun appendPing(s: String) {
+        pingLog.addLast(s)
+        while (pingLog.size > 40) pingLog.removeFirst()
+        renderPing()
+    }
+
+    private fun postPing(s: String) = runOnUiThread { appendPing(s) }
+
+    private fun renderPing() {
+        pingTv?.text = pingLog.joinToString("\n")
+    }
+
+    /** ping 详情弹窗：显示网关 IP + 日志 + 手动触发按钮 */
+    private fun showPingDialog() {
+        val gw = currentGateway()
+        val tv = android.widget.TextView(this)
+        tv.setPadding(48, 32, 48, 32)
+        tv.textSize = 13f
+        tv.setTextIsSelectable(true)
+        pingTv = tv
+        renderPing()
+        if (pingLog.isEmpty()) {
+            appendPing("点『立即探测』开始；守护探活每 5s 自动跑，结论见状态行『延迟 Nms』")
+            appendPing("网关：" + (gw?.hostAddress ?: "未获取"))
+        }
+        pingDialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("网关探活详情")
+            .setView(tv)
+            .setPositiveButton("立即探测", null)
+            .setNegativeButton("关闭", null)
+            .show()
+        pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            runManualPing()
+            // positive 默认会 dismiss；探测中保持弹窗可见，实时刷新结果
+            pingDialog?.let { d -> if (!d.isShowing) d.show() }
+        }
     }
 
     /**
@@ -874,7 +1029,7 @@ class MainActivity : AppCompatActivity() {
                     adapter.connectedBssid = ap.bssid
                     adapter.connectingBssid = null
                     adapter.notifyDataSetChanged()
-                    setStatusRed("已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
+                    setStatusRedIp("已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
                     startScan()   // 连接成功后触发一次列表刷新（信号强度/IP 状态同步）
                     Toast.makeText(
                         this@MainActivity,
@@ -1056,7 +1211,7 @@ class MainActivity : AppCompatActivity() {
         diag("SUG-RESULT code=$code ($reason)")
         runOnUiThread {
             if (code == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
-                setStatusRed("建议已提交：${ap.bssid}（等待系统自动连入，守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
+                setStatusRedIp("建议已提交：${ap.bssid}（等待系统自动连入，守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
                 Toast.makeText(this@MainActivity, "建议网络已提交，等待系统自动连入目标 AP", Toast.LENGTH_LONG).show()
                 startWatchdog()
                 startNudge()   // 功能1：选网器迟迟不评估时按阶梯唤醒
