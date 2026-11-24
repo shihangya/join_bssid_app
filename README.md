@@ -32,6 +32,12 @@ Android Wi-Fi BSSID 精确连接工具（Kotlin，minSdk 33 / targetSdk 36）。
 - 诊断文件日志 `files/diag.txt`（256KB 自动轮转），全部守护/探测/告警事件可追溯：
   `adb shell run-as com.dev.bssidconnect sh -c "cat files/diag.txt"`
 
+### 实时仪表盘（顶栏「仪表盘」按钮开关，启动默认收起）
+- 三块大字号指标实时刷新（2s 心跳）：**信号 RSSI**（≥-60 绿 / -60~-70 橙 / <-70 红）、**延迟 RTT**（≤50ms 绿 / ≤150ms 橙 / >150ms 红）、**链路速率**
+- 链路详情行：已锁定/漂移至/连接中 + 目标 BSSID（频段）+ 探活状态（正常/断流!）
+- 内嵌趋势曲线（与弹窗内同源）：RSSI 绿 / RTT 蓝双轴，30 分钟历史实时滚动
+- 未锁定目标时显示 `--` 与「链路：未锁定目标」
+
 ### 列表与输入
 - AP 列表搜索/过滤框（SSID/BSSID 即时过滤）
 - 分组展开状态记忆（重启/刷新后保持）
@@ -73,7 +79,9 @@ adb shell am broadcast -a com.dev.bssidconnect.STATUS \
 | moto X40 (Android 14) | ✓ 尊重 | ✓ | 均可 |
 | 华为 HONOR (EMUI 10) | 系统限制无法锁 BSSID | — | 不适配 |
 
-后台保活实测：一加/moto 锁屏后守护不停；vivo 系锁屏冻结 App 线程（前台服务也拦），需用户手动开"后台高耗电"。
+后台保活实测：一加/moto 锁屏后守护不停；vivo 系锁屏冻结 App 线程（前台服务也拦），需用户手动开「后台高耗电」。
+
+深色模式：DayNight 主题跟随系统，深色下全部文本/面板/图表颜色走 `values-night` 语义色（v18d）。
 
 ## 构建
 
@@ -100,3 +108,4 @@ gradle assembleDebug
 - v15d：IP 颜色随探活（通绿/断红）+ 移除 MAC 行
 - v16：探活目标可配置 + 信号趋势曲线；v16b 弹窗定高；v16c 按钮重排；v16d dismiss 防抖
 - v17：ADB 意图接口（LOCK/UNLOCK/STATUS 远程控制，GuardService 会话 intent 分发）
+- v18：实时仪表盘（大字号 RSSI/延迟/速率 + 颜色分级 + 趋势图）；v18b 顶栏标题单行瘦身；v18c 启动默认收起；v18d 深色模式（DayNight + values-night 语义色全覆盖）；v18e 修复仪表盘刷新卡死（TrendViewProxy 构造器丢弃 AttributeSet → XML id 不生效 → findViewById 恒 null → 数值停在打开瞬间快照）
