@@ -12,9 +12,10 @@ import android.view.View
  * 轮询里 invalidate() 驱动滚动。布局 inflate 时宿主 Activity 未必已构造完成，
  * 因此不持有 Activity 引用，全部数据取自 GuardState 单例。
  */
-class TrendViewProxy(ctx: Context) : View(ctx) {
-    /** XML 膨胀必需的 (Context, AttributeSet) 构造器（NoSuchMethodException 修复） */
-    constructor(ctx: Context, attrs: android.util.AttributeSet?) : this(ctx)
+class TrendViewProxy @JvmOverloads constructor(
+    ctx: Context,
+    attrs: android.util.AttributeSet? = null
+) : View(ctx, attrs) {
 
     private val pLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f }
     private val pText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 24f }

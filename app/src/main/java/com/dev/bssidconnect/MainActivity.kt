@@ -131,6 +131,7 @@ class MainActivity : AppCompatActivity() {
     /** v18：趋势图宿主。nullable 防御——setDashboard(true) 可能先于 findViewById 执行（时序竞态） */
     private var dashTrend: TrendViewProxy? = null
     private var dashOpen = false
+    private var lastDashDiagAt = 0L
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastScanAt = 0L
@@ -294,6 +295,13 @@ class MainActivity : AppCompatActivity() {
         dashSpeed = findViewById(R.id.dashSpeed)
         dashLink = findViewById(R.id.dashLink)
         dashTrend = findViewById(R.id.dashTrend)
+        // v18e 修复说明：TrendViewProxy 原二级构造器委托 this(ctx) 丢弃了 AttributeSet，
+        // 导致 XML 的 android:id 未生效（findViewById 一直返回 null，仪表盘数值停在一次快照）。
+        // 已改为 @JvmOverloads constructor(ctx, attrs) : View(ctx, attrs)，此处保留空值兜底。
+        if (dashTrend == null) {
+            dashTrend = dashPanel.findViewById(R.id.dashTrend)
+            diag("DASH-INIT fallback trend=${dashTrend != null}")
+        }
         findViewById<TextView>(R.id.btnDashHide).setOnClickListener { setDashboard(false) }
         // v18c：启动默认收起（面板只在用户手动点开时展示，不跨启动记忆）
         setDashboard(false)
@@ -466,6 +474,11 @@ class MainActivity : AppCompatActivity() {
     /** v18：仪表盘数据刷新（大字号 RSSI/延迟/速率 + 链路详情行 + 趋势图 invalidate） */
     private fun updateDashboard() {
         val t = GuardState.target
+        val rtt = GuardState.lastRttMs
+        if (SystemClock.elapsedRealtime() - lastDashDiagAt > 10000L) {
+            lastDashDiagAt = SystemClock.elapsedRealtime()
+            diag("DASH rssi=${try { wifiManager.connectionInfo?.rssi } catch (_: Exception) { null }} rtt=$rtt linkOk=${GuardState.linkOk} conn=${GuardState.connectedBssid}")
+        }
         if (t == null) {
             dashRssi.text = "--"; dashRtt.text = "--"; dashSpeed.text = "--"
             dashLink.text = "链路：未锁定目标"
@@ -473,7 +486,6 @@ class MainActivity : AppCompatActivity() {
         }
         val rssi = try { wifiManager.connectionInfo?.rssi?.takeIf { it in -100..0 } } catch (_: Exception) { null }
         val speed = try { wifiManager.connectionInfo?.linkSpeed?.takeIf { it > 0 } } catch (_: Exception) { null }
-        val rtt = GuardState.lastRttMs
         dashRssi.text = rssi?.toString() ?: "--"
         // RSSI 颜色分级：≥-60 绿 / -60~-70 橙 / <-70 红
         dashRssi.setTextColor(
@@ -1103,6 +1115,16 @@ class MainActivity : AppCompatActivity() {
                     adapter.connectedBssid = ap.bssid
                     adapter.connectingBssid = null
                     adapter.notifyDataSetChanged()
+                    // v18e：回退引擎连上后同步 GuardState（服务侧 onUnavailable 可能已清 target，
+                    // 仪表盘/通知依赖这些字段；恢复后 uiSync 心跳即可刷新仪表盘）
+                    if (GuardState.target == null) {
+                        GuardState.target = ap
+                        GuardState.password = password
+                        GuardState.useSuggestion = useSuggestion
+                        GuardState.connectedBssid = ap.bssid
+                        GuardState.uiMsg = "已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}"
+                        startWatchdog()   // Activity 本地守护接管（服务已停）
+                    }
                     setStatusRedIp("已连接 ${ap.bssid}（${ap.band}，防漂移守护中）${ipSuffix()}", ap.bssid, ipSuffix().removePrefix("，"))
                     startScan()   // 连接成功后触发一次列表刷新（信号强度/IP 状态同步）
                     Toast.makeText(
