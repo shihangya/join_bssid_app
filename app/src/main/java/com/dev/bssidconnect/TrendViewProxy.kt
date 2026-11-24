@@ -26,7 +26,7 @@ class TrendViewProxy(ctx: Context) : View(ctx) {
         canvas.drawRect(0f, 0f, w, h, pGrid)
         val s = GuardState.samples.toList()
         if (s.isEmpty()) {
-            pText.color = 0xFF888888.toInt()
+            pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.chart_tick_text)
             canvas.drawText("趋势图：守护探活每 5s 采样 RSSI/延迟", 20f, h / 2, pText)
             return
         }
@@ -38,13 +38,13 @@ class TrendViewProxy(ctx: Context) : View(ctx) {
         fun yRssi(v: Int) = h - ((v - rssiMin).toFloat() / ((rssiMax - rssiMin).coerceAtLeast(1))) * (h - 40) - 20
         fun yRtt(v: Long) = h - (v / rttMax) * (h - 40) - 20
         // 时间刻度
-        pText.color = 0xFF666666.toInt()
+        pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.chart_axis_text)
         val t0 = s.first().ts; val t1 = s.last().ts
         canvas.drawText(android.text.format.DateFormat.format("HH:mm", t0).toString(), 8f, h - 4f, pText)
         val lbl = android.text.format.DateFormat.format("HH:mm", t1).toString()
         canvas.drawText(lbl, w - pText.measureText(lbl) - 8f, h - 4f, pText)
         // RSSI 绿线
-        pLine.color = 0xFF2E7D32.toInt()
+        pLine.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rssi)
         var prev: Pair<Float, Float>? = null
         for ((i, sp) in s.withIndex()) {
             val r = sp.rssi ?: continue
@@ -54,7 +54,7 @@ class TrendViewProxy(ctx: Context) : View(ctx) {
             prev = x to y
         }
         // 延迟蓝线
-        pLine.color = 0xFF1565C0.toInt()
+        pLine.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rtt)
         prev = null
         for ((i, sp) in s.withIndex()) {
             val r = sp.rtt ?: continue
@@ -64,9 +64,9 @@ class TrendViewProxy(ctx: Context) : View(ctx) {
             prev = x to y
         }
         // 图例
-        pText.color = 0xFF2E7D32.toInt()
+        pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rssi)
         canvas.drawText("RSSI ${rssis.lastOrNull() ?: "-"}dBm", 8f, 30f, pText)
-        pText.color = 0xFF1565C0.toInt()
+        pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rtt)
         canvas.drawText("RTT ${rtts.lastOrNull() ?: "-"}ms", 260f, 30f, pText)
     }
 }

@@ -7,4 +7,22 @@
     <color name="divider">#EEEFF2</color>
     <color name="green">#00B578</color>
     <color name="red">#FA5151</color>
+    <!-- v18d 深色模式语义色（浅色主题取值） -->
+    <color name="text_primary">#1A1A1A</color>
+    <color name="text_item_secondary">#333333</color>
+    <color name="dash_panel_bg">#F5F6F8</color>
+    <color name="unlock_red">#D32F2F</color>
+    <!-- 图表：轴线/刻度/网格 -->
+    <color name="chart_axis_text">#666666</color>
+    <color name="chart_tick_text">#888888</color>
+    <color name="chart_grid">#33000000</color>
+    <color name="trend_rssi">#2E7D32</color>
+    <color name="trend_rtt">#1565C0</color>
+    <color name="dash_rssi_ok">#2E7D32</color>
+    <color name="dash_rtt_ok">#1565C0</color>
+    <color name="dash_speed">#E65100</color>
+    <color name="state_ok">#2E7D32</color>
+    <color name="state_warn">#E65100</color>
+    <color name="state_bad">#D32F2F</color>
+    <color name="state_neutral">#888888</color>
 </resources>

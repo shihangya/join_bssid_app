@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v18d 深色主题覆盖：仅语义色，功能色（红绿蓝橙）用亮色变体保证深底可读性 -->
+    <color name="bg_gray">#17181A</color>
+    <color name="divider">#2A2D31</color>
+    <color name="text_primary">#E8EAED</color>
+    <color name="text_item_secondary">#BDC1C6</color>
+    <color name="dash_panel_bg">#1E2124</color>
+    <color name="chart_axis_text">#9AA0A6</color>
+    <color name="chart_tick_text">#80868B</color>
+    <color name="chart_grid">#33FFFFFF</color>
+    <color name="trend_rssi">#81C995</color>
+    <color name="trend_rtt">#8AB4F8</color>
+    <color name="dash_rssi_ok">#81C995</color>
+    <color name="dash_rtt_ok">#8AB4F8</color>
+    <color name="dash_speed">#FDD663</color>
+    <color name="state_ok">#81C995</color>
+    <color name="state_warn">#FDD663</color>
+    <color name="state_bad">#F28B82</color>
+    <color name="state_neutral">#9AA0A6</color>
+</resources>

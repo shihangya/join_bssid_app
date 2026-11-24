@@ -478,20 +478,20 @@ class MainActivity : AppCompatActivity() {
         // RSSI 颜色分级：≥-60 绿 / -60~-70 橙 / <-70 红
         dashRssi.setTextColor(
             when {
-                rssi == null -> 0xFF888888.toInt()
-                rssi >= -60 -> 0xFF2E7D32.toInt()
-                rssi >= -70 -> 0xFFE65100.toInt()
-                else -> 0xFFD32F2F.toInt()
+                rssi == null -> getColor(R.color.state_neutral)
+                rssi >= -60 -> getColor(R.color.state_ok)
+                rssi >= -70 -> getColor(R.color.state_warn)
+                else -> getColor(R.color.state_bad)
             }
         )
         dashRtt.text = rtt?.toString() ?: "--"
         // RTT 颜色分级：≤50ms 绿 / ≤150ms 橙 / >150ms 红
         dashRtt.setTextColor(
             when {
-                rtt == null -> 0xFF888888.toInt()
-                rtt <= 50L -> 0xFF2E7D32.toInt()
-                rtt <= 150L -> 0xFFE65100.toInt()
-                else -> 0xFFD32F2F.toInt()
+                rtt == null -> getColor(R.color.state_neutral)
+                rtt <= 50L -> getColor(R.color.state_ok)
+                rtt <= 150L -> getColor(R.color.state_warn)
+                else -> getColor(R.color.state_bad)
             }
         )
         dashSpeed.text = speed?.toString() ?: "--"
@@ -667,7 +667,7 @@ class MainActivity : AppCompatActivity() {
             var idx = ssb.indexOf(part)
             while (idx >= 0) {
                 ssb.setSpan(
-                    android.text.style.ForegroundColorSpan(0xFFD32F2F.toInt()),
+                    android.text.style.ForegroundColorSpan(getColor(R.color.state_bad)),
                     idx, idx + part.length,
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
@@ -681,7 +681,7 @@ class MainActivity : AppCompatActivity() {
                 val ipLabel = "IP：$ip"
                 val i = ssb.indexOf(ipLabel)
                 if (i >= 0) {
-                    val ipColor = if (GuardState.linkOk == true) 0xFF2E7D32.toInt() else 0xFFD32F2F.toInt()
+                    val ipColor = if (GuardState.linkOk == true) getColor(R.color.state_ok) else getColor(R.color.state_bad)
                     ssb.setSpan(
                         object : android.text.style.ClickableSpan() {
                             override fun onClick(widget: android.view.View) { showPingDialog() }
@@ -892,14 +892,14 @@ class MainActivity : AppCompatActivity() {
     inner class TrendView(ctx: android.content.Context) : android.view.View(ctx) {
         private val pLine = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 3f }
         private val pText = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 24f }
-        private val pGrid = android.graphics.Paint().apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 1f; color = 0x33000000.toInt() }
+        private val pGrid = android.graphics.Paint().apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 1f; color = androidx.core.content.ContextCompat.getColor(context, R.color.chart_grid) }
         override fun onDraw(canvas: android.graphics.Canvas) {
             super.onDraw(canvas)
             val w = width.toFloat(); val h = height.toFloat()
             canvas.drawRect(0f, 0f, w, h, pGrid)
             val s = GuardState.samples.toList()
             if (s.isEmpty()) {
-                pText.color = 0xFF888888.toInt()
+                pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.chart_tick_text)
                 canvas.drawText("趋势图：守护探活每 5s 采样 RSSI/延迟", 20f, h / 2, pText)
                 return
             }
@@ -911,13 +911,13 @@ class MainActivity : AppCompatActivity() {
             fun yRssi(v: Int) = h - ( (v - rssiMin).toFloat() / ((rssiMax - rssiMin).coerceAtLeast(1)) ) * (h - 40) - 20
             fun yRtt(v: Long) = h - ( v / rttMax ) * (h - 40) - 20
             // 网格时间刻度：最早点与最新点
-            pText.color = 0xFF666666.toInt()
+            pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.chart_axis_text)
             val t0 = s.first().ts; val t1 = s.last().ts
             canvas.drawText(android.text.format.DateFormat.format("HH:mm", t0).toString(), 8f, h - 4f, pText)
             val lbl = android.text.format.DateFormat.format("HH:mm", t1).toString()
             canvas.drawText(lbl, w - pText.measureText(lbl) - 8f, h - 4f, pText)
             // RSSI 绿线
-            pLine.color = 0xFF2E7D32.toInt()
+            pLine.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rssi)
             var prev: Pair<Float, Float>? = null
             for ((i, sp) in s.withIndex()) {
                 val r = sp.rssi ?: continue
@@ -927,7 +927,7 @@ class MainActivity : AppCompatActivity() {
                 prev = x to y
             }
             // 延迟蓝线
-            pLine.color = 0xFF1565C0.toInt()
+            pLine.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rtt)
             prev = null
             for ((i, sp) in s.withIndex()) {
                 val r = sp.rtt ?: continue
@@ -937,9 +937,9 @@ class MainActivity : AppCompatActivity() {
                 prev = x to y
             }
             // 图例
-            pText.color = 0xFF2E7D32.toInt()
+            pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rssi)
             canvas.drawText("RSSI ${rssis.lastOrNull() ?: "-"}dBm", 8f, 30f, pText)
-            pText.color = 0xFF1565C0.toInt()
+            pText.color = androidx.core.content.ContextCompat.getColor(context, R.color.trend_rtt)
             canvas.drawText("RTT ${rtts.lastOrNull() ?: "-"}ms", 260f, 30f, pText)
         }
     }

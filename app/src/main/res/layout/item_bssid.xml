@@ -27,7 +27,7 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="monospace"
                 android:text="aa:bb:cc:dd:ee:ff"
-                android:textColor="#333333"
+                android:textColor="@color/text_item_secondary"
                 android:textSize="14sp"
                 android:maxLines="1"
                 android:ellipsize="end" />

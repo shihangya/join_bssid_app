@@ -20,7 +20,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="附近网络"
-            android:textColor="#1A1A1A"
+            android:textColor="@color/text_primary"
             android:textSize="15sp"
             android:textStyle="bold"
             android:maxLines="1"
@@ -59,7 +59,7 @@
             android:padding="5dp"
             android:layout_marginEnd="4dp"
             android:text="解锁"
-            android:textColor="#D32F2F"
+            android:textColor="@color/unlock_red"
             android:textSize="13sp"
             android:visibility="gone" />
 
@@ -115,7 +115,7 @@
         android:layout_marginHorizontal="12dp"
         android:layout_marginTop="6dp"
         android:padding="16dp"
-        android:background="#F5F6F8"
+        android:background="@color/dash_panel_bg"
         android:visibility="gone">
 
         <LinearLayout
@@ -135,7 +135,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="--"
-                    android:textColor="#2E7D32"
+                    android:textColor="@color/dash_rssi_ok"
                     android:textSize="30sp"
                     android:textStyle="bold" />
 
@@ -159,7 +159,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="--"
-                    android:textColor="#1565C0"
+                    android:textColor="@color/dash_rtt_ok"
                     android:textSize="30sp"
                     android:textStyle="bold" />
 
@@ -183,7 +183,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="--"
-                    android:textColor="#E65100"
+                    android:textColor="@color/dash_speed"
                     android:textSize="30sp"
                     android:textStyle="bold" />
 
