@@ -122,8 +122,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvPerm: TextView
     private lateinit var progressScan: ProgressBar
     private lateinit var btnMode: TextView
-    private lateinit var tvMac: TextView
-    
+
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastScanAt = 0L
     /** v14c：系统扫描限流窗口（Android 4 次/2min = 240s），用于限流提示计算剩余等待 */
@@ -277,13 +276,9 @@ class MainActivity : AppCompatActivity() {
         progressScan = findViewById(R.id.progressScan)
         btnMode = findViewById(R.id.btnMode)
         btnUnlock = findViewById(R.id.btnUnlock)
-        tvMac = findViewById(R.id.tvMac)
-        tvMac.setOnClickListener { showMacHelpDialog() }
         etSearch = findViewById(R.id.etSearch)
         // v15b: 状态行整行点击兜底打开 ping 详情（IP 红字有 ClickableSpan，这里保证任何点按都能进）
         tvStatus.setOnClickListener { showPingDialog() }
-
-        showMacInfo()
 
         // 功能2：首次启动按厂商推断默认模式；已有选择则恢复
         useSuggestion = loadModePref()
@@ -377,7 +372,6 @@ class MainActivity : AppCompatActivity() {
         }
         requestNotifPermissionIfNeeded()
         adapter.connectedBssid = currentBssid()
-        showMacInfo()
         // v14：UI 恢复时从服务同步状态文案（Activity 重建/回前台场景）
         syncUiFromGuardState()
         // 服务可能在 Activity 不在时被 GuardService.beginGuardSession 启动；
@@ -599,18 +593,19 @@ class MainActivity : AppCompatActivity() {
                 idx = ssb.indexOf(part, idx + part.length)
             }
         }
-        // v15b: IP 段叠加可点击入口（弹手动 ping 详情）
+        // v15b: IP 段叠加可点击入口（弹手动 ping 详情）；v15d: IP 颜色随链路探活（通=绿 / 断或未知=红）
         if (ipClickable) {
             val ip = currentIp()
             if (ip != null) {
                 val ipLabel = "IP：$ip"
                 val i = ssb.indexOf(ipLabel)
                 if (i >= 0) {
+                    val ipColor = if (GuardState.linkOk == true) 0xFF2E7D32.toInt() else 0xFFD32F2F.toInt()
                     ssb.setSpan(
                         object : android.text.style.ClickableSpan() {
                             override fun onClick(widget: android.view.View) { showPingDialog() }
                             override fun updateDrawState(ds: android.text.TextPaint) {
-                                ds.color = 0xFFD32F2F.toInt()
+                                ds.color = ipColor
                                 ds.isUnderlineText = true
                             }
                         },
@@ -764,135 +759,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 读取芯片出厂硬件 MAC（factory MAC）。
-     * Android 11+ 应用层拿不到 WifiInfo.getMacAddress()（返回 02:00:00:00:00:00），
-     * 依次尝试：反射 mWifiManager.factory MAC 相关隐藏字段/方法 → sysfs 节点 → 失败返回 null。
-     */
-    private fun readFactoryMac(): String? {
-        // 1) 反射 WifiManager 内部的 factory MAC（厂商/平台差异大，宽松遍历）
-        try {
-            val wm = wifiManager.javaClass
-            // 1a. getFactoryMac() 类似方法
-            for (m in wm.methods) {
-                if (m.parameterTypes.isEmpty() &&
-                    m.name.endsWith("actoryMac", ignoreCase = true) &&
-                    (m.returnType == String::class.java)
-                ) {
-                    val v = m.invoke(wifiManager) as? String
-                    if (!v.isNullOrEmpty() && v != "02:00:00:00:00:00") return v
-                }
-            }
-            // 1b. 常见隐藏字段（mFactoryMac / factoryMac / mWifiFactoryMac …）
-            var c: Class<*>? = wm
-            var depth = 0
-            while (c != null && c != Any::class.java && depth < 4) {
-                for (f in c.declaredFields) {
-                    if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                    val n = f.name.lowercase()
-                    if ((n.contains("factory") || n.contains("persistent")) && n.contains("mac")) {
-                        f.isAccessible = true
-                        val v = f.get(wifiManager) as? String
-                        if (!v.isNullOrEmpty() && v != "02:00:00:00:00:00") return v
-                    }
-                }
-                c = c.superclass
-                depth++
-            }
-            // 1c. WifiInfo 里也可能有（部分平台）
-            val info = wifiManager.connectionInfo
-            if (info != null) {
-                for (f in info.javaClass.declaredFields) {
-                    if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                    val n = f.name.lowercase()
-                    if (n.contains("factory") && n.contains("mac")) {
-                        f.isAccessible = true
-                        val v = f.get(info) as? String
-                        if (!v.isNullOrEmpty() && v != "02:00:00:00:00:00") return v
-                    }
-                }
-            }
-        } catch (_: Throwable) {
-        }
-        // 2) sysfs /proc 节点（root/部分平台可读，普通应用一般被 SELinux 拦，读不到就算了）
-        for (p in arrayOf(
-            "/sys/class/net/wlan0/address",
-            "/proc/net/arp/wlan0_address",
-            "/sys/class/net/wlan1/address"
-        )) {
-            try {
-                val v = java.io.File(p).readText().trim()
-                if (v.matches(Regex("([0-9a-f]{2}:){5}[0-9a-f]{2}"))) return v
-            } catch (_: Throwable) {
-            }
-        }
-        // 3) Settings.Global 个别平台把出厂 MAC 存在这里（非标准，试试无妨）
-        try {
-            for (k in arrayOf("wifi_sta_factory_mac_address", "wifi_factory_mac", "factory_mac")) {
-                val v = android.provider.Settings.Global.getString(contentResolver, k)
-                if (!v.isNullOrEmpty() && v.matches(Regex("([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}"))) return v
-            }
-        } catch (_: Throwable) {
-        }
-        return null
-    }
-
-    /** wlan0 网卡当前 MAC（开启随机化时是随机 MAC，非出厂 MAC）。 */
-    private fun readWlanInterfaceMac(): String? = try {
-        val nis = java.net.NetworkInterface.getNetworkInterfaces()
-        var result: String? = null
-        while (nis?.hasMoreElements() == true && result == null) {
-            val ni = nis.nextElement()
-            if (ni.name?.startsWith("wlan") == true) {
-                val mac = ni.hardwareAddress
-                if (mac != null && mac.size == 6) {
-                    val v = mac.joinToString(":") { String.format("%02x", it) }
-                    if (v != "02:00:00:00:00:00") result = v
-                }
-            }
-        }
-        result
-    } catch (_: Throwable) {
-        null
-    }
-
-    private fun showMacInfo() {
-        val factory = readFactoryMac()
-        val iface = readWlanInterfaceMac()
-        val curMac = try {
-            wifiManager.connectionInfo?.macAddress
-        } catch (_: Exception) {
-            null
-        }
-        val info = buildString {
-            append("硬件MAC：")
-            append(factory ?: "应用层不可读（系统限制，点击查看ADB查询方法）")
-            if (iface != null) append("　网卡MAC：").append(iface).append("（当前，随机化后）")
-        }
-        tvMac.text = info
-        diag("MAC-INFO factory=$factory iface=$iface connectionInfo=$curMac")
-    }
-
-    private fun showMacHelpDialog() {
-        val msg = buildString {
-            appendLine("Android 11 起普通应用无法读取 Wi-Fi 硬件 MAC（出厂 MAC）。")
-            appendLine("当前能读到的所有应用层路径均已尝试并被系统拦截。")
-            appendLine()
-            appendLine("可通过 ADB 在电脑上查询（手机连接电脑后执行）：")
-            appendLine()
-            appendLine("adb shell dumpsys wifi | findstr /i factory")
-            appendLine()
-            appendLine("输出的 wifi_sta_factory_mac_address 即为出厂硬件 MAC。")
-            appendLine()
-            appendLine("说明：当前连接使用的随机 MAC 每个保存网络固定不变")
-            appendLine("（系统默认 Non-Persistent 随机化按 SSID 生成并持久保存）。")
-        }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("关于硬件 MAC")
-            .setMessage(msg)
-            .setPositiveButton("知道了", null)
-            .show()
-    }
 
     private fun onConnectClicked(ap: ApItem) {
         if (ap.secure == "开放") {

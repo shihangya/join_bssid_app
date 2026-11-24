@@ -666,6 +666,7 @@ class GuardService : Service() {
         if (!GuardState.connectedBssid.equals(targetBssid, true)) return  // 已漂移/断开：探活结果不判
         if (ok) {
             lastRttMs = rttMs
+            GuardState.linkOk = true
             stallFails = 0
             stallOks++
             if (stallAlerted && stallOks >= stallOkLimit) {
@@ -677,6 +678,7 @@ class GuardService : Service() {
             }
         } else {
             lastRttMs = null
+            GuardState.linkOk = false
             stallOks = 0
             stallFails++
             if (!stallAlerted && stallFails >= stallFailLimit) {
@@ -734,6 +736,7 @@ class GuardService : Service() {
         probeRunning = false
         probeTargetBssid = null
         lastRttMs = null
+        GuardState.linkOk = null
         stallFails = 0
         stallOks = 0
         if (stallAlerted) {
