@@ -690,6 +690,7 @@ class GuardService : Service() {
         }
         if (ok) {
             lastRttMs = rttMs
+            GuardState.lastRttMs = rttMs   // v18：同步给 Activity 仪表盘
             GuardState.linkOk = true
             stallFails = 0
             stallOks++
@@ -702,6 +703,7 @@ class GuardService : Service() {
             }
         } else {
             lastRttMs = null
+            GuardState.lastRttMs = null
             GuardState.linkOk = false
             stallOks = 0
             stallFails++

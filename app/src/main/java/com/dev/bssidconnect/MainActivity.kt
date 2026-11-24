@@ -122,6 +122,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvPerm: TextView
     private lateinit var progressScan: ProgressBar
     private lateinit var btnMode: TextView
+    // ==== v18：实时仪表盘 ====
+    private lateinit var dashPanel: android.widget.LinearLayout
+    private lateinit var dashRssi: TextView
+    private lateinit var dashRtt: TextView
+    private lateinit var dashSpeed: TextView
+    private lateinit var dashLink: TextView
+    /** v18：趋势图宿主。nullable 防御——setDashboard(true) 可能先于 findViewById 执行（时序竞态） */
+    private var dashTrend: TrendViewProxy? = null
+    private var dashOpen = false
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastScanAt = 0L
@@ -277,11 +286,25 @@ class MainActivity : AppCompatActivity() {
         btnMode = findViewById(R.id.btnMode)
         btnUnlock = findViewById(R.id.btnUnlock)
         etSearch = findViewById(R.id.etSearch)
+
+        // ==== v18：实时仪表盘（默认收起；点状态行右侧区域展开/收起）====
+        dashPanel = findViewById(R.id.dashPanel)
+        dashRssi = findViewById(R.id.dashRssi)
+        dashRtt = findViewById(R.id.dashRtt)
+        dashSpeed = findViewById(R.id.dashSpeed)
+        dashLink = findViewById(R.id.dashLink)
+        dashTrend = findViewById(R.id.dashTrend)
+        findViewById<TextView>(R.id.btnDashHide).setOnClickListener { setDashboard(false) }
+        // 仪表盘开关持久化（重启 App 保持上次选择）
+        dashOpen = getSharedPreferences("ui_state", Context.MODE_PRIVATE).getBoolean("dash_open", false)
+        setDashboard(dashOpen)
         // v15b: 状态行整行点击兜底打开 ping 详情（IP 红字有 ClickableSpan，这里保证任何点按都能进）
         tvStatus.setOnClickListener {
             // v16c：弹窗刚 dismiss（1.5s 内）忽略状态行点击——防"关完连击又弹开"
             if (SystemClock.elapsedRealtime() - lastDialogDismissAt > 1500L) showPingDialog()
         }
+        // v18：顶栏"仪表盘"按钮切换展开/收起（长按在 vivo 不可靠，改常驻按钮）
+        findViewById<TextView>(R.id.btnDash).setOnClickListener { setDashboard(!dashOpen) }
 
         // 功能2：首次启动按厂商推断默认模式；已有选择则恢复
         useSuggestion = loadModePref()
@@ -434,8 +457,63 @@ class MainActivity : AppCompatActivity() {
                 adapter.connectingBssid = null
                 adapter.notifyDataSetChanged()
             }
+            // v18：仪表盘实时刷新（展开时每 2s 更新大字号指标+趋势图）
+            // 卫哨：视图未初始化（onCreate 未完成）时跳过，防 lateinit/nullable 竞态崩溃
+            if (dashOpen && dashTrend != null) updateDashboard()
             uiSyncHandler.postDelayed(this, 2000L)
         }
+    }
+
+    /** v18：仪表盘数据刷新（大字号 RSSI/延迟/速率 + 链路详情行 + 趋势图 invalidate） */
+    private fun updateDashboard() {
+        val t = GuardState.target
+        if (t == null) {
+            dashRssi.text = "--"; dashRtt.text = "--"; dashSpeed.text = "--"
+            dashLink.text = "链路：未锁定目标"
+            return
+        }
+        val rssi = try { wifiManager.connectionInfo?.rssi?.takeIf { it in -100..0 } } catch (_: Exception) { null }
+        val speed = try { wifiManager.connectionInfo?.linkSpeed?.takeIf { it > 0 } } catch (_: Exception) { null }
+        val rtt = GuardState.lastRttMs
+        dashRssi.text = rssi?.toString() ?: "--"
+        // RSSI 颜色分级：≥-60 绿 / -60~-70 橙 / <-70 红
+        dashRssi.setTextColor(
+            when {
+                rssi == null -> 0xFF888888.toInt()
+                rssi >= -60 -> 0xFF2E7D32.toInt()
+                rssi >= -70 -> 0xFFE65100.toInt()
+                else -> 0xFFD32F2F.toInt()
+            }
+        )
+        dashRtt.text = rtt?.toString() ?: "--"
+        // RTT 颜色分级：≤50ms 绿 / ≤150ms 橙 / >150ms 红
+        dashRtt.setTextColor(
+            when {
+                rtt == null -> 0xFF888888.toInt()
+                rtt <= 50L -> 0xFF2E7D32.toInt()
+                rtt <= 150L -> 0xFFE65100.toInt()
+                else -> 0xFFD32F2F.toInt()
+            }
+        )
+        dashSpeed.text = speed?.toString() ?: "--"
+        val conn = GuardState.connectedBssid
+        dashLink.text = buildString {
+            append("链路：")
+            append(if (conn.equals(t.bssid, true)) "已锁定 " else if (conn != null) "漂移至 $conn " else "连接中 ")
+            append("目标 ${t.bssid}（${t.band}）")
+            if (GuardState.linkOk == true) append(" · 探活正常")
+            else if (GuardState.linkOk == false) append(" · 探活断流!")
+        }
+        dashTrend?.invalidate()
+    }
+
+    /** v18：仪表盘展开/收起（持久化到 ui_state） */
+    private fun setDashboard(open: Boolean) {
+        dashOpen = open
+        dashPanel.visibility = if (open) View.VISIBLE else View.GONE
+        getSharedPreferences("ui_state", Context.MODE_PRIVATE)
+            .edit().putBoolean("dash_open", open).apply()
+        if (open) updateDashboard()
     }
 
     override fun onStart() {

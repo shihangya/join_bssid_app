@@ -229,6 +229,8 @@ object GuardState {
     @Volatile var connectedBssid: String? = null
     /** v15d：链路探活结果（true=通/IP绿，false=断/IP红，null=未知/默认红） */
     @Volatile var linkOk: Boolean? = null
+    /** v18：最近一次探活延迟 ms（仪表盘大字号显示；与 GuardService.lastRttMs 同步写） */
+    @Volatile var lastRttMs: Long? = null
 }
 
 /** LockPlan 的 SharedPreferences 持久化（密码单独存，JSON 用 org.json 手拼避免引依赖） */
