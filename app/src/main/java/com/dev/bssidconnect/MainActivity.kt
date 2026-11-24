@@ -726,7 +726,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendPing(s: String) {
         pingLog.addLast(s)
-        while (pingLog.size > 40) pingLog.removeFirst()
+        while (pingLog.size > 12) pingLog.removeFirst()   // v16b：一次探测记录容量（固定 8 行区显示）
         renderPing()
     }
 
@@ -772,6 +772,7 @@ class MainActivity : AppCompatActivity() {
         tv.setPadding(0, 16, 0, 0)
         tv.textSize = 13f
         tv.setTextIsSelectable(true)
+        tv.setLines(8)   // v16b：固定 8 行（一次探测记录：2 行头 + 5 发 + 结果），弹窗高度稳定不跳
         pingTv = tv
         renderPing()
         if (pingLog.isEmpty()) {
@@ -788,6 +789,11 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton("保存目标", null)
             .setNegativeButton("关闭", null)
             .show()
+        // v16b：弹窗固定大小（宽 92%，高 = 标题+输入行+320px 趋势图+8 行日志+按钮行，一次探测记录刚好放下）
+        pingDialog?.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92f).toInt(),
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
         pingDialog?.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
             val t = etTarget.text?.toString()?.trim().orEmpty()
             ProbeConfig.setTarget(this, t)   // 顺手记住目标
