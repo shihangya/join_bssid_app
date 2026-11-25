@@ -21,7 +21,7 @@
             android:layout_marginEnd="8dp"
             android:visibility="gone" />
 
-        <!-- v20：标题移除，低频操作收进"更多"菜单；btnUnlock 平时占位显示状态、点击解锁 -->
+        <!-- v20d：图标改文字按钮（⟳/⚙ 字形随字号缩放会错位，放弃图标方案） -->
 
         <TextView
             android:id="@+id/btnUnlock"
@@ -47,19 +47,19 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:padding="8dp"
-            android:text="⚙"
+            android:layout_marginEnd="2dp"
+            android:text="更多"
             android:textColor="@color/text_secondary"
-            android:textSize="18sp" />
+            android:textSize="15sp" />
 
         <TextView
             android:id="@+id/btnScan"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:padding="8dp"
-            android:layout_marginStart="2dp"
-            android:text="⟳"
+            android:text="刷新"
             android:textColor="@color/primary"
-            android:textSize="27sp" />
+            android:textSize="15sp" />
     </LinearLayout>
 
     <TextView
