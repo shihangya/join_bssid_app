@@ -121,7 +121,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvPerm: TextView
     private lateinit var progressScan: ProgressBar
-    private lateinit var btnMode: TextView
+    private lateinit var topSpacer: View
+    // v20：顶栏 btnMode 已移除（模式切换走 ⚙ 更多菜单 toggleMode()）
     // ==== v18：实时仪表盘 ====
     private lateinit var dashPanel: android.widget.LinearLayout
     private lateinit var dashRssi: TextView
@@ -284,8 +285,8 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         tvPerm = findViewById(R.id.tvPerm)
         progressScan = findViewById(R.id.progressScan)
-        btnMode = findViewById(R.id.btnMode)
         btnUnlock = findViewById(R.id.btnUnlock)
+        topSpacer = findViewById(R.id.topSpacer)
         etSearch = findViewById(R.id.etSearch)
 
         // ==== v18：实时仪表盘（默认收起；点状态行右侧区域展开/收起）====
@@ -310,21 +311,31 @@ class MainActivity : AppCompatActivity() {
             // v16c：弹窗刚 dismiss（1.5s 内）忽略状态行点击——防"关完连击又弹开"
             if (SystemClock.elapsedRealtime() - lastDialogDismissAt > 1500L) showPingDialog()
         }
-        // v18：顶栏"仪表盘"按钮切换展开/收起（长按在 vivo 不可靠，改常驻按钮）
-        findViewById<TextView>(R.id.btnDash).setOnClickListener { setDashboard(!dashOpen) }
-        // v19：顶栏"详情"按钮 → 网络信息全景面板
-        findViewById<TextView>(R.id.btnInfo).setOnClickListener { showInfoDialog() }
+        // v20：顶栏精简——低频操作（仪表盘/详情/模式切换）收进"⚙ 更多"菜单
+        findViewById<TextView>(R.id.btnMore).setOnClickListener { view ->
+            val popup = android.widget.PopupMenu(this, view)
+            popup.menu.apply {
+                add("仪表盘").setOnMenuItemClickListener {
+                    setDashboard(!dashOpen); true
+                }
+                add("网络信息详情").setOnMenuItemClickListener {
+                    showInfoDialog(); true
+                }
+                add(if (useSuggestion) "切换模式 → Specifier" else "切换模式 → Suggestion")
+                    .setOnMenuItemClickListener { toggleMode(); true }
+            }
+            popup.show()
+        }
 
         // 功能2：首次启动按厂商推断默认模式；已有选择则恢复
         useSuggestion = loadModePref()
-        btnMode.text = if (useSuggestion) "模式:Suggestion" else "模式:Specifier"
         diag("MODE-INIT -> ${if (useSuggestion) "Suggestion" else "Specifier"} (pref or OEM default)")
 
         // 功能3：恢复上次锁定方案（杀进程/重启后自动重锁）。
         // v14：恢复动作直接交给 GuardService 前台服务承载（守护不随 Activity 生命周期中断）
         val savedPlan = LockPlanStorage.load(this)
         if (savedPlan != null) {
-            btnUnlock.visibility = View.VISIBLE
+            setUnlockVisible(true)
             setStatusRedIp("恢复锁定方案：${savedPlan.bssid}（${savedPlan.band}）${ipSuffix()}", savedPlan.bssid, ipSuffix().removePrefix("，"))
             diag("PLAN-RESTORE bssid=${savedPlan.bssid} mode=${if (savedPlan.useSuggestion) "sug" else "spec"}")
             val ap = ApItem(
@@ -380,20 +391,21 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.btnScan).setOnClickListener { startScan() }
         tvPerm.setOnClickListener { requestNeededPermissions() }
-        btnMode.setOnClickListener {
-            useSuggestion = !useSuggestion
-            btnMode.text = if (useSuggestion) "模式:Suggestion" else "模式:Specifier"
-            // 功能2：模式持久化
-            getSharedPreferences("bsc_prefs", Context.MODE_PRIVATE)
-                .edit().putBoolean("mode_suggestion", useSuggestion).apply()
-            diag("MODE -> ${if (useSuggestion) "Suggestion" else "Specifier"} (saved)")
-            Toast.makeText(
-                this,
-                if (useSuggestion) "已切换 Suggestion 模式：提交系统建议网络（厂商处理可能不同）"
-                else "已切换 Specifier 模式：即时请求连接",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
+    }
+
+    /** v20：模式切换抽成函数（顶栏 btnMode 已移除，由 ⚙ 更多菜单调用） */
+    private fun toggleMode() {
+        useSuggestion = !useSuggestion
+        // 功能2：模式持久化
+        getSharedPreferences("bsc_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("mode_suggestion", useSuggestion).apply()
+        diag("MODE -> ${if (useSuggestion) "Suggestion" else "Specifier"} (saved)")
+        Toast.makeText(
+            this,
+            if (useSuggestion) "已切换 Suggestion 模式：提交系统建议网络（厂商处理可能不同）"
+            else "已切换 Specifier 模式：即时请求连接",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     override fun onResume() {
@@ -1136,7 +1148,7 @@ class MainActivity : AppCompatActivity() {
             ),
             password
         )
-        btnUnlock.visibility = View.VISIBLE
+        setUnlockVisible(true)
         diag("PLAN-SAVED bssid=${ap.bssid} mode=${if (useSuggestion) "sug" else "spec"}")
     }
 
@@ -1356,6 +1368,12 @@ class MainActivity : AppCompatActivity() {
     // ==== 功能3：锁定方案持久化 + 自动重锁 + 解锁按钮 ====
     private lateinit var btnUnlock: TextView
 
+    /** v20：解锁按钮与占位 spacer 互斥（两者都带 weight=1，同显会平分顶栏空间） */
+    private fun setUnlockVisible(visible: Boolean) {
+        btnUnlock.visibility = if (visible) View.VISIBLE else View.GONE
+        topSpacer.visibility = if (visible) View.GONE else View.VISIBLE
+    }
+
     /** 当前锁定状态序列化为 LockPlan 并落盘 */
     private fun persistLockPlan() {
         val t = lockedTarget ?: return
@@ -1367,13 +1385,13 @@ class MainActivity : AppCompatActivity() {
             ),
             lockedPassword
         )
-        btnUnlock.visibility = View.VISIBLE
+        setUnlockVisible(true)
         diag("PLAN-SAVED bssid=${t.bssid} mode=${if (useSuggestion) "sug" else "spec"}")
     }
 
     private fun clearLockPlan() {
         LockPlanStorage.clear(this)
-        btnUnlock.visibility = View.GONE
+        setUnlockVisible(false)
         diag("PLAN-CLEARED")
     }
 

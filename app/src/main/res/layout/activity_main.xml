@@ -11,76 +11,55 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp">
-
-        <TextView
-            android:id="@+id/tvTitle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="附近网络"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:textStyle="bold"
-            android:maxLines="1"
-            android:ellipsize="end" />
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp">
 
         <ProgressBar
             android:id="@+id/progressScan"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginEnd="8dp"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/btnDash"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="5dp"
-            android:layout_marginEnd="4dp"
-            android:text="仪表盘"
-            android:textColor="@color/primary"
-            android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/btnMode"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="5dp"
-            android:layout_marginEnd="4dp"
-            android:text="模式:Specifier"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
+        <!-- v20：标题移除，低频操作收进"更多"菜单；btnUnlock 平时占位显示状态、点击解锁 -->
 
         <TextView
             android:id="@+id/btnUnlock"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:padding="5dp"
-            android:layout_marginEnd="4dp"
-            android:text="解锁"
+            android:text="● 已锁定目标"
             android:textColor="@color/unlock_red"
             android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
             android:visibility="gone" />
 
+        <View
+            android:id="@+id/topSpacer"
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
         <TextView
-            android:id="@+id/btnInfo"
+            android:id="@+id/btnMore"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="5dp"
-            android:layout_marginEnd="4dp"
-            android:text="详情"
-            android:textColor="@color/primary"
-            android:textSize="13sp" />
+            android:padding="8dp"
+            android:text="⚙"
+            android:textColor="@color/text_secondary"
+            android:textSize="18sp" />
 
         <TextView
             android:id="@+id/btnScan"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="5dp"
-            android:text="刷新"
+            android:padding="8dp"
+            android:layout_marginStart="2dp"
+            android:text="⟳"
             android:textColor="@color/primary"
-            android:textSize="15sp" />
+            android:textSize="20sp" />
     </LinearLayout>
 
     <TextView
