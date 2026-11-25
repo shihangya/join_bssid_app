@@ -59,7 +59,7 @@
             android:layout_marginStart="2dp"
             android:text="⟳"
             android:textColor="@color/primary"
-            android:textSize="22sp" />
+            android:textSize="27sp" />
     </LinearLayout>
 
     <TextView
