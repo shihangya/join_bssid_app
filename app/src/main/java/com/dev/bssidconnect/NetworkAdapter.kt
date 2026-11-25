@@ -79,13 +79,18 @@ class NetworkAdapter(
         val tvBand = row.findViewById<TextView>(R.id.tvBand)
         val tvSecure = row.findViewById<TextView>(R.id.tvSecure)
         val tvChannel = row.findViewById<TextView>(R.id.tvChannel)
+        val tvStd = row.findViewById<TextView>(R.id.tvStd)
         val tvSignal = row.findViewById<TextView>(R.id.tvSignal)
         val btn = row.findViewById<Button>(R.id.btnConnect)
 
         tvBssid.text = ap.bssid
-        tvBand.text = if (ap.isWifi6Plus) "${ap.band}·6" else ap.band
+        tvBand.text = ap.band
         tvSecure.text = ap.secure
         tvChannel.text = "ch ${ap.channel}"
+        // v19：Wi-Fi 标准标注（11be/11ax/…；未知隐藏，band 不再重复带 ·6 后缀）
+        val std = standardName(ap.wifiStandard)
+        tvStd.visibility = if (std != null) View.VISIBLE else View.GONE
+        tvStd.text = std ?: ""
         tvSignal.text = "${ap.level}dBm"
 
         when {

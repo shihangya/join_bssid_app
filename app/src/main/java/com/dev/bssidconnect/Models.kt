@@ -19,9 +19,20 @@ data class ApItem(
     val channel: Int,
     val band: String,        // 2.4G / 5G / 6G
     val secure: String,      // OPEN / WEP / WPA / WPA2 / WPA3
-    val isWifi6Plus: Boolean
+    val isWifi6Plus: Boolean,
+    val wifiStandard: Int = -1   // v19：ScanResult.wifiStandard 原始值（-1=未知），列表标准标注用
 )
 
+/** v19：wifiStandard 常量 → 展示名（11be/11ax/11ac/…）；未知返回 null。a/b/g 老标准统一归 LEGACY */
+fun standardName(std: Int): String? = when (std) {
+    ScanResult.WIFI_STANDARD_11BE -> "11be"
+    ScanResult.WIFI_STANDARD_11AX -> "11ax"
+    ScanResult.WIFI_STANDARD_11AC -> "11ac"
+    ScanResult.WIFI_STANDARD_11N -> "11n"
+    ScanResult.WIFI_STANDARD_11AD -> "11ad"
+    ScanResult.WIFI_STANDARD_LEGACY -> "legacy"
+    else -> null
+}
 /** ScanResult → ApItem */
 fun ScanResult.toApItem(): ApItem {
     val freq = this.frequency
@@ -57,7 +68,8 @@ fun ScanResult.toApItem(): ApItem {
         channel = channel,
         band = band,
         secure = secure,
-        isWifi6Plus = wifi6
+        isWifi6Plus = wifi6,
+        wifiStandard = if (Build.VERSION.SDK_INT >= 30) this.wifiStandard else -1
     )
 }
 

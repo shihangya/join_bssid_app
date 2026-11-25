@@ -64,6 +64,16 @@
             android:visibility="gone" />
 
         <TextView
+            android:id="@+id/btnInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="5dp"
+            android:layout_marginEnd="4dp"
+            android:text="详情"
+            android:textColor="@color/primary"
+            android:textSize="13sp" />
+
+        <TextView
             android:id="@+id/btnScan"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

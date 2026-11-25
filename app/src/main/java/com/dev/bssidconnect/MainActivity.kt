@@ -312,6 +312,8 @@ class MainActivity : AppCompatActivity() {
         }
         // v18：顶栏"仪表盘"按钮切换展开/收起（长按在 vivo 不可靠，改常驻按钮）
         findViewById<TextView>(R.id.btnDash).setOnClickListener { setDashboard(!dashOpen) }
+        // v19：顶栏"详情"按钮 → 网络信息全景面板
+        findViewById<TextView>(R.id.btnInfo).setOnClickListener { showInfoDialog() }
 
         // 功能2：首次启动按厂商推断默认模式；已有选择则恢复
         useSuggestion = loadModePref()
@@ -826,6 +828,102 @@ class MainActivity : AppCompatActivity() {
     private fun renderPing() {
         pingTv?.text = pingLog.joinToString("\n")
     }
+
+    /**
+     * v19：网络信息全景面板——当前 Wi-Fi 连接的完整参数一屏看完，
+     * 替代 adb shell cmd wifi status 手动排查。
+     * 数据源：WifiInfo（BSSID/频段/标准/速率/MLO）+ LinkProperties（IP/网关/DNS/前缀）+ GuardState（锁定/探活状态）。
+     */
+    private fun showInfoDialog() {
+        val sb = StringBuilder()
+        val wi = try { wifiManager.connectionInfo } catch (_: Exception) { null }
+        val t = GuardState.target
+        val conn = GuardState.connectedBssid
+
+        sb.append("── 锁定状态 ──\n")
+        if (t == null) {
+            sb.append("未锁定目标\n")
+        } else {
+            sb.append("目标：${t.bssid}（${t.band}·ch${t.channel}，${t.ssid}）\n")
+            sb.append("模式：${if (GuardState.useSuggestion) "Suggestion" else "Specifier"}\n")
+            sb.append("当前：${conn ?: "未连接"}${if (conn != null && !conn.equals(t.bssid, true)) "  ⚠ 已漂移" else ""}\n")
+            sb.append("探活：${when (GuardState.linkOk) { true -> "正常"; false -> "断流!"; else -> "未知" }}")
+            GuardState.lastRttMs?.let { sb.append("（${it}ms）") }
+            sb.append("\n")
+        }
+
+        sb.append("\n── 链路参数 ──\n")
+        if (wi == null || wi.bssid == null || wi.bssid == "02:00:00:00:00:00") {
+            sb.append("Wi-Fi 未连接\n")
+        } else {
+            sb.append("SSID：${wi.ssid?.removePrefix("\"")?.removeSuffix("\"") ?: "?"}\n")
+            sb.append("BSSID：${wi.bssid}\n")
+            val freq = wi.frequency
+            val band = when {
+                freq in 2401..2495 -> "2.4G"
+                freq in 5160..5885 -> "5G"
+                freq >= 5955 -> "6G"
+                else -> "${freq}MHz"
+            }
+            sb.append("频段/信道：$band / ch ${(freq - if (band == "2.4G") 2407 else 5000) / 5}（${freq}MHz）\n")
+            if (Build.VERSION.SDK_INT >= 30) {
+                sb.append("Wi-Fi 标准：${standardName(wi.wifiStandard) ?: "未知"}\n")
+                // MLO（Wi-Fi 7 双频合一）：AP MLD 地址为空 = 非 MLO 关联
+                val mld = try { wi.apMldMacAddress?.toString() } catch (_: Exception) { null }
+                val linkId = try { wi.apMloLinkId } catch (_: Exception) { -1 }
+                sb.append("MLO：${if (mld != null) "MLD $mld · LinkId $linkId" else "非 MLO 关联（AP MLD=<none>）"}\n")
+            }
+            sb.append("RSSI：${wi.rssi} dBm\n")
+            sb.append("速率：${wi.linkSpeed} Mbps（Tx ${wi.txLinkSpeedMbps}/Rx ${wi.rxLinkSpeedMbps}）\n")
+            if (Build.VERSION.SDK_INT >= 33) sb.append("安全类型：${describeSecurity(wi.currentSecurityType)}\n")
+        }
+
+        sb.append("\n── 网络参数 ──\n")
+        var lp: android.net.LinkProperties? = null
+        try {
+            for (network in connectivityManager.allNetworks) {
+                val ni = connectivityManager.getNetworkCapabilities(network) ?: continue
+                if (!ni.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+                lp = connectivityManager.getLinkProperties(network)
+                if (lp != null) break
+            }
+        } catch (_: Exception) {}
+        if (lp == null) {
+            sb.append("无 Wi-Fi 网络属性\n")
+        } else {
+            val v4 = lp.linkAddresses.firstOrNull { it.address is java.net.Inet4Address }
+            sb.append("本机 IP：${v4?.address?.hostAddress ?: "?"}（前缀 /${v4?.prefixLength ?: "?"}）\n")
+            val gwRoute = lp.routes.firstOrNull { it.hasGateway() }
+            sb.append("网关：${gwRoute?.gateway?.hostAddress ?: "?"}\n")
+            sb.append("DNS：${lp.dnsServers.joinToString("、") { it.hostAddress ?: "?" }}\n")
+            sb.append("接口：${lp.interfaceName ?: "?"}  域名：${lp.domains?.ifEmpty { "-" }}\n")
+        }
+
+        val tv = android.widget.TextView(this)
+        tv.text = sb.toString()
+        tv.textSize = 13f
+        tv.setPadding(48, 32, 48, 24)
+        tv.setTextIsSelectable(true)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("网络信息全景")
+            .setView(tv)
+            .setPositiveButton("关闭", null)
+            .show()
+    }
+
+    /** WifiInfo.SecurityType 常量 → 文本（API 33 起 currentSecurityMode；低版本退化 capabilities 无法回查，显示未知） */
+    private fun describeSecurity(mode: Int): String = if (Build.VERSION.SDK_INT >= 33) when (mode) {
+        android.net.wifi.WifiInfo.SECURITY_TYPE_OPEN -> "开放"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_WEP -> "WEP"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_PSK -> "WPA/WPA2-PSK"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_EAP -> "WPA2/3-企业"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_SAE -> "WPA3-SAE"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_OWE -> "OWE（增强开放）"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_WAPI_PSK -> "WAPI-PSK"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_WAPI_CERT -> "WAPI-证书"
+        android.net.wifi.WifiInfo.SECURITY_TYPE_EAP_WPA3_ENTERPRISE -> "WPA3-企业"
+        else -> "未知($mode)"
+    } else "未知（需 Android 13+）"
 
     /** ping 详情弹窗 v16：探测目标可配置 + 信号趋势曲线 + 日志 */
     private fun showPingDialog() {
