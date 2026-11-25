@@ -110,3 +110,4 @@ gradle assembleDebug
 - v17：ADB 意图接口（LOCK/UNLOCK/STATUS 远程控制，GuardService 会话 intent 分发）
 - v18：实时仪表盘（大字号 RSSI/延迟/速率 + 颜色分级 + 趋势图）；v18b 顶栏标题单行瘦身；v18c 启动默认收起；v18d 深色模式（DayNight + values-night 语义色全覆盖）；v18e 修复仪表盘刷新卡死（TrendViewProxy 构造器丢弃 AttributeSet → XML id 不生效 → findViewById 恒 null → 数值停在打开瞬间快照）
 - v19：网络信息全景面板（顶栏"详情"：锁定状态 + 链路参数 SSID/BSSID/频段信道/Wi-Fi 标准/MLO/RSSI/Tx-Rx 速率/安全类型 + 网络参数 IP/网关/DNS/接口，字段与 `cmd wifi status` 逐项对齐）；AP 列表 Wi-Fi 标准标注（11be/11ax/… 小标，`ScanResult.wifiStandard` API30+）
+- v20：顶栏精简（移除「附近网络」标题；仪表盘/详情/模式切换收进顶栏 ⚙ 更多菜单；刷新改图标 ⟳；解锁按钮锁定时占位显示「● 已锁定目标」）
